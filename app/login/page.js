@@ -84,40 +84,17 @@ export default function LoginPage() {
 
       if (password.length < 6) throw new Error('Password must be at least 6 characters');
 
-      const { data, error: authError } = await supabase.auth.signUp({ email, password });
-      if (authError) throw authError;
+      // Use server-side API to create user (bypasses email confirmation + RLS)
+      const res = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, fullName, orgName }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Signup failed');
 
-      if (data.user) {
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          email,
-          full_name: fullName,
-          role: 'super_admin',
-          org_name: orgName,
-        }, { onConflict: 'id' });
-
-        if (orgName) {
-          await supabase.from('site_settings').upsert(
-            { key: 'site_name', value: orgName, updated_at: new Date().toISOString() },
-            { onConflict: 'key' }
-          );
-        }
-      }
-
-      // If email confirmation is required
-      if (data.user && !data.session) {
-        setSuccess('Account created! Check your email to confirm, then sign in.');
-        setMode('login');
-      } else if (data.session) {
-        const userInfo = {
-          id: data.user.id,
-          email: data.user.email,
-          role: 'super_admin',
-          full_name: fullName || email,
-        };
-        sessionStorage.setItem('pm_user', JSON.stringify(userInfo));
-        router.push('/dashboard');
-      }
+      setSuccess('Account created! You can now sign in.');
+      setMode('login');
     } catch (err) {
       setError(err.message || 'Sign up failed');
     }
