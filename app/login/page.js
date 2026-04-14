@@ -54,7 +54,7 @@ export default function LoginPage() {
         router.push('/portal');
       } else if (userInfo.role === 'accounts') {
         router.push('/dashboard/bills');
-      } else {
+      } else { // super_admin, admin, developer
         router.push('/dashboard');
       }
     } catch (err) {
