@@ -1,6 +1,10 @@
 import Link from 'next/link';
+import QRCode from 'qrcode';
 
-export default function Home() {
+export default async function Home() {
+  const qrDataUrl = await QRCode.toDataURL('https://parkmanager-ai.vercel.app/login', {
+    width: 200, margin: 1, color: { dark: '#0f766e', light: '#ffffff' }
+  });
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-teal-800 to-sky-900">
       {/* Nav */}
@@ -44,6 +48,12 @@ export default function Home() {
           >
             Learn More
           </a>
+        </div>
+
+        {/* QR Code for mobile login */}
+        <div className="mt-10 flex flex-col items-center gap-3">
+          <img src={qrDataUrl} alt="Scan to login" className="w-40 h-40 rounded-xl shadow-lg" />
+          <p className="text-sm text-slate-400">Scan with your phone to open the app</p>
         </div>
       </div>
 
