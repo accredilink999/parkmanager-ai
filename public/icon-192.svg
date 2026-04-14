@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#059669"/>
+      <stop offset="100%" style="stop-color:#0d9488"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="192" height="192" rx="38" fill="url(#bg)"/>
+  <!-- Caravan body -->
+  <rect x="28" y="62" width="108" height="58" rx="10" fill="white" opacity="0.95"/>
+  <!-- Caravan roof curve -->
+  <path d="M28 72 Q28 52 48 52 L116 52 Q136 52 136 72" fill="white" opacity="0.95"/>
+  <!-- Window -->
+  <rect x="42" y="60" width="28" height="22" rx="4" fill="#059669" opacity="0.6"/>
+  <rect x="78" y="60" width="28" height="22" rx="4" fill="#059669" opacity="0.6"/>
+  <!-- Door -->
+  <rect x="114" y="72" width="16" height="28" rx="3" fill="#059669" opacity="0.5"/>
+  <circle cx="117" cy="86" r="2" fill="white" opacity="0.8"/>
+  <!-- Tow bar -->
+  <line x1="136" y1="100" x2="164" y2="100" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  <!-- Wheels -->
+  <circle cx="52" cy="120" r="12" fill="white" opacity="0.9"/>
+  <circle cx="52" cy="120" r="6" fill="#059669"/>
+  <circle cx="112" cy="120" r="12" fill="white" opacity="0.9"/>
+  <circle cx="112" cy="120" r="6" fill="#059669"/>
+  <!-- Ground line -->
+  <line x1="20" y1="132" x2="172" y2="132" stroke="white" stroke-width="2" opacity="0.4"/>
+  <!-- Text -->
+  <text x="96" y="160" font-family="Arial,sans-serif" font-size="20" font-weight="bold" fill="white" text-anchor="middle" opacity="0.95">PARK MGR</text>
+  <text x="96" y="178" font-family="Arial,sans-serif" font-size="12" fill="white" text-anchor="middle" opacity="0.7">AI</text>
+</svg>
