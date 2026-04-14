@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -26,22 +26,18 @@ function GasContent() {
   const [loading, setLoading] = useState(true);
   const [pitches, setPitches] = useState([]);
 
-  // Scan modal
-  const [showScanner, setShowScanner] = useState(false);
-  const [scanError, setScanError] = useState('');
-  const [scanMode, setScanMode] = useState('add'); // add | out_customer | out_offsite | return
-  const html5QrCodeRef = useRef(null);
-  const scannerRef = useRef(null);
-
   // Add cylinder form
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newCylinder, setNewCylinder] = useState({ barcode: '', size: '13kg', type: 'Propane', supplier: '' });
+  const [newCylinder, setNewCylinder] = useState({ collar_number: '', size: '13kg', type: 'Propane', supplier: '' });
 
-  // Scan-out form
+  // Assign / scan-out form
   const [showScanOutForm, setShowScanOutForm] = useState(false);
   const [scanOutCylinder, setScanOutCylinder] = useState(null);
   const [scanOutPitch, setScanOutPitch] = useState('');
   const [scanOutType, setScanOutType] = useState('customer'); // customer | offsite
+
+  // Collar number lookup
+  const [collarInput, setCollarInput] = useState('');
 
   // Delivery sessions
   const [deliverySessions, setDeliverySessions] = useState([]);
@@ -138,84 +134,33 @@ function GasContent() {
     try { localStorage.setItem('pm_gas_return_sessions', JSON.stringify(all)); } catch {}
   }
 
-  // ---- QR/Barcode Scanner ----
-  async function startScanner(mode) {
-    setScanMode(mode);
-    setShowScanner(true);
-    setScanError('');
-    try {
-      const { Html5Qrcode } = await import('html5-qrcode');
-      await new Promise(r => setTimeout(r, 200));
-      const scanner = new Html5Qrcode('gas-qr-reader');
-      html5QrCodeRef.current = scanner;
+  // ---- Collar Number Lookup ----
+  function handleCollarLookup(mode) {
+    const collar = collarInput.trim();
+    if (!collar) return;
 
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 }, formatsToSupport: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
-        (decodedText) => {
-          handleScanResult(decodedText, mode);
-          stopScanner();
-        },
-        () => {}
-      );
-    } catch (err) {
-      setScanError(err.message || 'Camera access denied.');
-    }
-  }
-
-  async function stopScanner() {
-    setShowScanner(false);
-    if (html5QrCodeRef.current) {
-      try { await html5QrCodeRef.current.stop(); html5QrCodeRef.current.clear(); } catch {}
-      html5QrCodeRef.current = null;
-    }
-  }
-
-  function handleScanResult(barcode, mode) {
-    barcode = barcode.trim();
-
-    if (mode === 'add') {
-      // Check if already exists
-      const existing = cylinders.find(c => c.barcode === barcode);
-      if (existing) {
-        flash(`Cylinder ${barcode} already in inventory (${existing.status})`);
-        return;
-      }
-      setNewCylinder(prev => ({ ...prev, barcode }));
-      setShowAddForm(true);
-      flash(`Scanned: ${barcode} — complete the form to add`);
-    } else if (mode === 'out_customer' || mode === 'out_offsite') {
-      const cyl = cylinders.find(c => c.barcode === barcode);
+    if (mode === 'out_customer' || mode === 'out_offsite') {
+      const cyl = cylinders.find(c => c.collar_number === collar);
       if (!cyl) {
-        flash(`Cylinder ${barcode} not found in inventory. Scan it in first.`);
+        flash(`Collar ${collar} not found in inventory. Add it first.`);
         return;
       }
       if (cyl.status === 'offsite') {
-        flash(`Cylinder ${barcode} is already offsite.`);
+        flash(`Collar ${collar} is already offsite.`);
         return;
       }
       setScanOutCylinder(cyl);
       setScanOutType(mode === 'out_customer' ? 'customer' : 'offsite');
       setShowScanOutForm(true);
     } else if (mode === 'return') {
-      const cyl = cylinders.find(c => c.barcode === barcode);
+      const cyl = cylinders.find(c => c.collar_number === collar);
       if (!cyl) {
-        flash(`Cylinder ${barcode} not found in inventory.`);
+        flash(`Collar ${collar} not found in inventory.`);
         return;
       }
-      // Return to site (empty)
       handleReturnCylinder(cyl);
-    } else if (mode === 'delivery_in') {
-      // Add to delivery session
-      const existing = cylinders.find(c => c.barcode === barcode);
-      if (existing) {
-        flash(`Cylinder ${barcode} already in inventory (${existing.status})`);
-        return;
-      }
-      setNewCylinder(prev => ({ ...prev, barcode }));
-      setShowAddForm(true);
-      flash(`Delivery scan: ${barcode}`);
     }
+    setCollarInput('');
   }
 
   function flash(msg) {
@@ -225,11 +170,18 @@ function GasContent() {
 
   // ---- Cylinder CRUD ----
   async function addCylinder() {
-    if (!newCylinder.barcode) return;
+    if (!newCylinder.collar_number) return;
+
+    // Check duplicate collar number
+    const existing = cylinders.find(c => c.collar_number === newCylinder.collar_number);
+    if (existing) {
+      flash(`Collar ${newCylinder.collar_number} already in inventory (${existing.status})`);
+      return;
+    }
 
     const cyl = {
       id: 'cyl_' + Date.now(),
-      barcode: newCylinder.barcode,
+      collar_number: newCylinder.collar_number,
       size: newCylinder.size,
       type: newCylinder.type,
       supplier: newCylinder.supplier,
@@ -243,8 +195,8 @@ function GasContent() {
     };
 
     if (supabase) {
-      const { barcode, size, type, supplier, status } = cyl;
-      await supabase.from('gas_cylinders').insert({ barcode, size, type, supplier, status });
+      const { collar_number, size, type, supplier, status } = cyl;
+      await supabase.from('gas_cylinders').insert({ collar_number, size, type, supplier, status });
       loadData();
     } else {
       saveCylinders([cyl, ...cylinders]);
@@ -254,16 +206,16 @@ function GasContent() {
     if (activeDelivery) {
       const updated = {
         ...activeDelivery,
-        cylinders: [...(activeDelivery.cylinders || []), { barcode: cyl.barcode, size: cyl.size, type: cyl.type, scanned_at: new Date().toISOString() }],
+        cylinders: [...(activeDelivery.cylinders || []), { collar_number: cyl.collar_number, size: cyl.size, type: cyl.type, added_at: new Date().toISOString() }],
       };
       setActiveDelivery(updated);
       const allSessions = deliverySessions.map(s => s.id === updated.id ? updated : s);
       saveDeliverySessions(allSessions);
     }
 
-    flash(`Cylinder ${newCylinder.barcode} added to inventory`);
+    flash(`Cylinder ${newCylinder.collar_number} added to inventory`);
     setShowAddForm(false);
-    setNewCylinder({ barcode: '', size: '13kg', type: 'Propane', supplier: '' });
+    setNewCylinder({ collar_number: '', size: '13kg', type: 'Propane', supplier: '' });
   }
 
   async function scanOutCylinderConfirm() {
@@ -304,7 +256,7 @@ function GasContent() {
       saveCylinders(updated);
     }
 
-    flash(`Cylinder ${scanOutCylinder.barcode} scanned out — ${scanOutType === 'offsite' ? 'offsite (removed from site)' : 'to customer'}`);
+    flash(`Cylinder ${scanOutCylinder.collar_number} — ${scanOutType === 'offsite' ? 'removed from site' : 'assigned to customer'}`);
     setShowScanOutForm(false);
     setScanOutCylinder(null);
     setScanOutPitch('');
@@ -343,14 +295,14 @@ function GasContent() {
     if (activeReturn) {
       const updatedSession = {
         ...activeReturn,
-        cylinders: [...(activeReturn.cylinders || []), { barcode: cyl.barcode, size: cyl.size, type: cyl.type, returned_at: new Date().toISOString() }],
+        cylinders: [...(activeReturn.cylinders || []), { collar_number: cyl.collar_number, size: cyl.size, type: cyl.type, returned_at: new Date().toISOString() }],
       };
       setActiveReturn(updatedSession);
       const allSessions = returnSessions.map(s => s.id === updatedSession.id ? updatedSession : s);
       saveReturnSessions(allSessions);
     }
 
-    flash(`Cylinder ${cyl.barcode} returned to site`);
+    flash(`Cylinder ${cyl.collar_number} returned to site`);
   }
 
   async function deleteCylinder(cyl) {
@@ -360,7 +312,7 @@ function GasContent() {
     } else {
       saveCylinders(cylinders.filter(c => c.id !== cyl.id));
     }
-    flash(`Cylinder ${cyl.barcode} removed from inventory`);
+    flash(`Cylinder ${cyl.collar_number} removed from inventory`);
   }
 
   // ---- Delivery Sessions ----
@@ -376,7 +328,7 @@ function GasContent() {
     const all = [...deliverySessions, sess];
     saveDeliverySessions(all);
     setTab('delivery');
-    flash('Delivery session started — scan incoming cylinders');
+    flash('Delivery session started — add incoming cylinders');
   }
 
   function completeDeliverySession() {
@@ -407,7 +359,7 @@ function GasContent() {
     const all = [...returnSessions, sess];
     saveReturnSessions(all);
     setTab('returns');
-    flash('Return session started — scan empties being returned');
+    flash('Return session started — enter collar numbers for empties');
   }
 
   function completeReturnSession() {
@@ -482,7 +434,7 @@ function GasContent() {
     doc.rect(14, y - 4, 182, 8, 'F');
     doc.setFontSize(8);
     doc.setTextColor(100);
-    doc.text('Barcode', 16, y);
+    doc.text('Collar No.', 16, y);
     doc.text('Size', 55, y);
     doc.text('Type', 75, y);
     doc.text('Status', 100, y);
@@ -494,7 +446,7 @@ function GasContent() {
     for (const c of onSite) {
       if (y > 275) { doc.addPage(); y = 20; }
       doc.setFontSize(8);
-      doc.text(c.barcode, 16, y);
+      doc.text(c.collar_number || c.barcode || '', 16, y);
       doc.text(c.size || '', 55, y);
       doc.text(c.type || '', 75, y);
       doc.text(c.status === 'with_customer' ? 'With Customer' : 'In Store', 100, y);
@@ -531,7 +483,7 @@ function GasContent() {
     if (filterStatus !== 'all' && c.status !== filterStatus) return false;
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
-      return (c.barcode || '').toLowerCase().includes(q) ||
+      return (c.collar_number || c.barcode || '').toLowerCase().includes(q) ||
         (c.pitch_number || '').toLowerCase().includes(q) ||
         (c.customer_name || '').toLowerCase().includes(q) ||
         (c.type || '').toLowerCase().includes(q);
@@ -557,13 +509,10 @@ function GasContent() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => startScanner('add')}
-              className="px-3 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-500 transition-colors flex items-center gap-1.5"
+              onClick={() => setShowAddForm(true)}
+              className="px-3 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-500 transition-colors"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-              </svg>
-              Scan In
+              + Add Cylinder
             </button>
           </div>
         </div>
@@ -574,31 +523,6 @@ function GasContent() {
         <div className="fixed top-4 right-4 z-50 bg-orange-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm max-w-sm">{toast}</div>
       )}
 
-      {/* Scanner Modal */}
-      {showScanner && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  {scanMode === 'add' || scanMode === 'delivery_in' ? 'Scan Cylinder In' :
-                   scanMode === 'return' ? 'Scan Empty Return' :
-                   'Scan Cylinder Out'}
-                </h3>
-                <p className="text-xs text-slate-400">Point camera at barcode or QR code</p>
-              </div>
-              <button onClick={stopScanner} className="text-slate-400 hover:text-slate-600">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div id="gas-qr-reader" ref={scannerRef} className="rounded-xl overflow-hidden" />
-            {scanError && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{scanError}</div>}
-          </div>
-        </div>
-      )}
-
       {/* Add Cylinder Form Modal */}
       {showAddForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
@@ -606,9 +530,10 @@ function GasContent() {
             <h3 className="text-base font-bold text-slate-900 mb-4">Add Gas Cylinder</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Barcode / QR *</label>
-                <input value={newCylinder.barcode} onChange={e => setNewCylinder(p => ({ ...p, barcode: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="Scanned or enter manually" />
+                <label className="block text-xs font-medium text-slate-500 mb-1">Collar Number (4 digits) *</label>
+                <input value={newCylinder.collar_number} onChange={e => setNewCylinder(p => ({ ...p, collar_number: e.target.value.replace(/[^0-9]/g, '').slice(0, 4) }))}
+                  inputMode="numeric" maxLength={4}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-lg font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="e.g. 7208" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -638,9 +563,9 @@ function GasContent() {
               </div>
             </div>
             <div className="flex gap-2 mt-5">
-              <button onClick={() => { setShowAddForm(false); setNewCylinder({ barcode: '', size: '13kg', type: 'Propane', supplier: '' }); }}
+              <button onClick={() => { setShowAddForm(false); setNewCylinder({ collar_number: '', size: '13kg', type: 'Propane', supplier: '' }); }}
                 className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm">Cancel</button>
-              <button onClick={addCylinder} disabled={!newCylinder.barcode}
+              <button onClick={addCylinder} disabled={!newCylinder.collar_number || newCylinder.collar_number.length < 4}
                 className="flex-1 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-orange-500">Add to Inventory</button>
             </div>
           </div>
@@ -651,8 +576,8 @@ function GasContent() {
       {showScanOutForm && scanOutCylinder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-            <h3 className="text-base font-bold text-slate-900 mb-1">Scan Out Cylinder</h3>
-            <p className="text-xs text-slate-400 mb-4">Barcode: <span className="font-mono">{scanOutCylinder.barcode}</span> — {scanOutCylinder.size} {scanOutCylinder.type}</p>
+            <h3 className="text-base font-bold text-slate-900 mb-1">Assign Cylinder</h3>
+            <p className="text-xs text-slate-400 mb-4">Collar: <span className="font-mono font-bold">{scanOutCylinder.collar_number || scanOutCylinder.barcode}</span> — {scanOutCylinder.size} {scanOutCylinder.type}</p>
 
             <div className="space-y-3 mb-5">
               <div>
@@ -734,12 +659,25 @@ function GasContent() {
               </div>
             </div>
 
+            {/* Quick collar lookup */}
+            <div className="bg-white rounded-xl border p-4 mb-4">
+              <label className="block text-xs font-semibold text-slate-600 mb-2">Quick Action — Enter Collar Number</label>
+              <div className="flex items-center gap-2">
+                <input value={collarInput} onChange={e => setCollarInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                  inputMode="numeric" maxLength={4}
+                  className="w-28 px-3 py-2 border border-slate-200 rounded-lg text-lg font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="0000" />
+                <button onClick={() => handleCollarLookup('out_customer')} disabled={collarInput.length < 4}
+                  className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-500 disabled:opacity-40">Out to Customer</button>
+                <button onClick={() => handleCollarLookup('out_offsite')} disabled={collarInput.length < 4}
+                  className="px-3 py-2 bg-slate-600 text-white rounded-lg text-xs font-medium hover:bg-slate-500 disabled:opacity-40">Offsite</button>
+                <button onClick={() => handleCollarLookup('return')} disabled={collarInput.length < 4}
+                  className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500 disabled:opacity-40">Return</button>
+              </div>
+            </div>
+
             {/* Actions bar */}
             <div className="flex flex-wrap items-center gap-2 mb-4">
-              <button onClick={() => setShowAddForm(true)} className="px-3 py-2 bg-orange-600 text-white rounded-lg text-xs font-medium hover:bg-orange-500">+ Add Manually</button>
-              <button onClick={() => startScanner('out_customer')} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-500">Scan Out to Customer</button>
-              <button onClick={() => startScanner('out_offsite')} className="px-3 py-2 bg-slate-600 text-white rounded-lg text-xs font-medium hover:bg-slate-500">Scan Offsite</button>
-              <button onClick={() => startScanner('return')} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500">Scan Return</button>
+              <button onClick={() => setShowAddForm(true)} className="px-3 py-2 bg-orange-600 text-white rounded-lg text-xs font-medium hover:bg-orange-500">+ Add Cylinder</button>
               <div className="flex-1" />
               <button onClick={() => exportInventoryPdf('manager')} className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-200">PDF (Manager)</button>
               <button onClick={() => exportInventoryPdf('head_office')} className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-200">PDF (Head Office)</button>
@@ -747,7 +685,7 @@ function GasContent() {
 
             {/* Search & Filter */}
             <div className="flex gap-2 mb-4">
-              <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search barcode, pitch, customer..."
+              <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search collar number, pitch, customer..."
                 className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
               <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
                 className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
@@ -766,7 +704,7 @@ function GasContent() {
                 <svg className="w-12 h-12 text-slate-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                 </svg>
-                <p className="text-sm text-slate-400">No cylinders in inventory. Scan a barcode or add manually.</p>
+                <p className="text-sm text-slate-400">No cylinders in inventory. Add one using the collar number.</p>
               </div>
             ) : (
               <div className="bg-white rounded-xl border overflow-hidden">
@@ -774,7 +712,7 @@ function GasContent() {
                   <table className="w-full">
                     <thead className="bg-slate-50 border-b">
                       <tr>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Barcode</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Collar No.</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Size</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Type</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Status</th>
@@ -786,7 +724,7 @@ function GasContent() {
                     <tbody className="divide-y divide-slate-100">
                       {filteredCylinders.map(c => (
                         <tr key={c.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 text-sm font-mono font-medium text-slate-900">{c.barcode}</td>
+                          <td className="px-4 py-3 text-sm font-mono font-medium text-slate-900">{c.collar_number || c.barcode}</td>
                           <td className="px-4 py-3 text-sm text-slate-600">{c.size}</td>
                           <td className="px-4 py-3 text-sm text-slate-600">{c.type}</td>
                           <td className="px-4 py-3">{statusBadge(c.status)}</td>
@@ -832,11 +770,8 @@ function GasContent() {
                       <p className="text-xs text-slate-400">{activeDelivery.cylinders.length} cylinders scanned in</p>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => startScanner('delivery_in')} className="px-3 py-2 bg-orange-600 text-white rounded-lg text-xs font-medium hover:bg-orange-500 flex items-center gap-1">
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                        </svg>
-                        Scan Next
+                      <button onClick={() => setShowAddForm(true)} className="px-3 py-2 bg-orange-600 text-white rounded-lg text-xs font-medium hover:bg-orange-500">
+                        + Add Next
                       </button>
                       <button onClick={completeDeliverySession} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500">Complete</button>
                     </div>
@@ -844,7 +779,7 @@ function GasContent() {
 
                   {activeDelivery.cylinders.length === 0 ? (
                     <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center">
-                      <p className="text-sm text-slate-400">No cylinders scanned yet. Tap &quot;Scan Next&quot; to scan each incoming cylinder.</p>
+                      <p className="text-sm text-slate-400">No cylinders added yet. Tap &quot;+ Add Next&quot; to enter each incoming cylinder&apos;s collar number.</p>
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-100">
@@ -852,7 +787,7 @@ function GasContent() {
                         <div key={i} className="py-2 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-green-600 font-bold">&#10003;</span>
-                            <span className="text-sm font-mono text-slate-800">{c.barcode}</span>
+                            <span className="text-sm font-mono text-slate-800">{c.collar_number || c.barcode}</span>
                           </div>
                           <span className="text-xs text-slate-400">{c.size} {c.type}</span>
                         </div>
@@ -870,7 +805,7 @@ function GasContent() {
                     </svg>
                   </div>
                   <h3 className="text-base font-bold text-slate-900 mb-1">Delivery Session</h3>
-                  <p className="text-sm text-slate-500 mb-4">Start a session when a gas delivery arrives. Scan each cylinder in as it comes off the truck.</p>
+                  <p className="text-sm text-slate-500 mb-4">Start a session when a gas delivery arrives. Enter each cylinder&apos;s collar number as it comes off the truck.</p>
                   <button onClick={startDeliverySession} className="px-6 py-3 bg-orange-600 text-white rounded-xl text-sm font-semibold hover:bg-orange-500">Start Delivery Session</button>
                 </div>
 
@@ -919,12 +854,13 @@ function GasContent() {
                       <p className="text-xs text-slate-400">{activeReturn.cylinders.length} empties returned</p>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => startScanner('return')} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500 flex items-center gap-1">
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                        </svg>
-                        Scan Empty
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <input value={collarInput} onChange={e => setCollarInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                          inputMode="numeric" maxLength={4}
+                          className="w-20 px-2 py-2 border border-slate-200 rounded-lg text-sm font-mono text-center focus:outline-none focus:ring-2 focus:ring-green-500" placeholder="0000" />
+                        <button onClick={() => handleCollarLookup('return')} disabled={collarInput.length < 4}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500 disabled:opacity-40">Return</button>
+                      </div>
                       <button onClick={completeReturnSession} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500">Complete</button>
                     </div>
                   </div>
@@ -939,7 +875,7 @@ function GasContent() {
                         <div key={i} className="py-2 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-green-600 font-bold">&#10003;</span>
-                            <span className="text-sm font-mono text-slate-800">{c.barcode}</span>
+                            <span className="text-sm font-mono text-slate-800">{c.collar_number || c.barcode}</span>
                           </div>
                           <span className="text-xs text-slate-400">{c.size} {c.type} — returned {new Date(c.returned_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
@@ -958,7 +894,7 @@ function GasContent() {
                       {cylinders.filter(c => c.status === 'with_customer').map(c => (
                         <button key={c.id} onClick={() => handleReturnCylinder(c)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 text-left">
                           <div>
-                            <p className="text-sm font-mono font-medium text-slate-800">{c.barcode}</p>
+                            <p className="text-sm font-mono font-medium text-slate-800">{c.collar_number || c.barcode}</p>
                             <p className="text-xs text-slate-400">{c.size} {c.type} — Pitch {c.pitch_number} ({c.customer_name || 'Unknown'})</p>
                           </div>
                           <span className="text-xs text-green-600 font-medium">Return &rarr;</span>
@@ -977,7 +913,7 @@ function GasContent() {
                     </svg>
                   </div>
                   <h3 className="text-base font-bold text-slate-900 mb-1">Empty Returns Session</h3>
-                  <p className="text-sm text-slate-500 mb-4">Start a session when collecting empties. Scan each empty cylinder to move it back to store.</p>
+                  <p className="text-sm text-slate-500 mb-4">Start a session when collecting empties. Enter each empty cylinder&apos;s collar number to move it back to store.</p>
                   <button onClick={startReturnSession} className="px-6 py-3 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-500">Start Return Session</button>
                 </div>
 
@@ -1074,7 +1010,7 @@ function GasContent() {
                       {onsiteInStore.map(c => (
                         <div key={c.id} className="px-4 py-3 flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-mono font-medium text-slate-800">{c.barcode}</p>
+                            <p className="text-sm font-mono font-medium text-slate-800">{c.collar_number || c.barcode}</p>
                             <p className="text-xs text-slate-400">{c.size} {c.type}{c.supplier ? ` — ${c.supplier}` : ''}</p>
                           </div>
                           {statusBadge(c.status)}
@@ -1095,7 +1031,7 @@ function GasContent() {
                       {onsiteWithCustomer.map(c => (
                         <div key={c.id} className="px-4 py-3 flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-mono font-medium text-slate-800">{c.barcode}</p>
+                            <p className="text-sm font-mono font-medium text-slate-800">{c.collar_number || c.barcode}</p>
                             <p className="text-xs text-slate-400">{c.size} {c.type} — Pitch {c.pitch_number || '?'} ({c.customer_name || 'Unknown'})</p>
                           </div>
                           {statusBadge(c.status)}

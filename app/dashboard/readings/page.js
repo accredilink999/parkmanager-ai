@@ -37,21 +37,15 @@ function ReadingsContent() {
   const scannerRef = useRef(null);
   const html5QrCodeRef = useRef(null);
 
-  // Camera / Live OCR
+  // Camera / Snap-Photo OCR
   const [showCamera, setShowCamera] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
   const [ocrConfidence, setOcrConfidence] = useState(null);
+  const [ocrProcessing, setOcrProcessing] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(null); // data URL of captured photo before OCR result
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const workerRef = useRef(null);
-  const scanIntervalRef = useRef(null);
-  const [liveDigits, setLiveDigits] = useState('');
-  const [liveConfidence, setLiveConfidence] = useState(0);
-  const [matchCount, setMatchCount] = useState(0);
-  const [readingLocked, setReadingLocked] = useState(false);
-  const lastDetectedRef = useRef('');
-  const matchCountRef = useRef(0);
-  const LOCK_THRESHOLD = 3;
 
   // ---- Reading Session ----
   const [session, setSession] = useState(null); // { id, started_at, readings: { [pitchId]: { reading, usage_kwh, previous_reading, read_at } }, status: 'active'|'complete' }
@@ -292,7 +286,7 @@ function ReadingsContent() {
     }
   }
 
-  // ---- Camera & Live OCR Scanning ----
+  // ---- Camera & Snap-Photo OCR ----
   async function initOcrWorker() {
     if (workerRef.current) return;
     try {
@@ -307,12 +301,8 @@ function ReadingsContent() {
     setShowCamera(true);
     setCapturedImage(null);
     setOcrConfidence(null);
-    setLiveDigits('');
-    setLiveConfidence(0);
-    setMatchCount(0);
-    setReadingLocked(false);
-    lastDetectedRef.current = '';
-    matchCountRef.current = 0;
+    setPhotoPreview(null);
+    setOcrProcessing(false);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -321,8 +311,6 @@ function ReadingsContent() {
       streamRef.current = stream;
       await new Promise(r => setTimeout(r, 300));
       if (videoRef.current) videoRef.current.srcObject = stream;
-      await initOcrWorker();
-      startLiveScan();
     } catch {
       setToast('Camera access denied. Please allow camera permissions.');
       setTimeout(() => setToast(''), 3000);
@@ -344,60 +332,58 @@ function ReadingsContent() {
     return canvas;
   }
 
-  function cropGuideArea() {
+  async function capturePhoto() {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return null;
-    const vw = video.videoWidth, vh = video.videoHeight;
-    const boxW = Math.round(vw * 0.7), boxH = Math.round(vh * 0.15);
-    const boxX = Math.round((vw - boxW) / 2), boxY = Math.round((vh - boxH) / 2);
+    if (!video || !video.videoWidth) return;
+
+    // Capture full-resolution frame
     const canvas = document.createElement('canvas');
-    canvas.width = boxW; canvas.height = boxH;
-    canvas.getContext('2d').drawImage(video, boxX, boxY, boxW, boxH, 0, 0, boxW, boxH);
-    const scaled = document.createElement('canvas');
-    scaled.width = boxW * 2; scaled.height = boxH * 2;
-    const sCtx = scaled.getContext('2d');
-    sCtx.imageSmoothingEnabled = false;
-    sCtx.drawImage(canvas, 0, 0, boxW * 2, boxH * 2);
-    return preprocessImage(scaled);
-  }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const photoUrl = canvas.toDataURL('image/jpeg', 0.92);
+    setPhotoPreview(photoUrl);
+    setOcrProcessing(true);
 
-  function startLiveScan() {
-    if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
-    let scanning = false;
-    scanIntervalRef.current = setInterval(async () => {
-      if (scanning || !workerRef.current || !videoRef.current) return;
-      scanning = true;
-      try {
-        const cropped = cropGuideArea();
-        if (!cropped) { scanning = false; return; }
-        const dataUrl = cropped.toDataURL('image/png');
-        const { data } = await workerRef.current.recognize(dataUrl);
-        let digits = data.text.replace(/[^0-9.]/g, '').replace(/^\.+|\.+$/g, '').trim();
-        digits = digits.replace(/\.{2,}/g, '.');
+    // Stop camera stream (we have the photo now)
+    stopCameraStream();
 
-        if (digits && digits.length >= 3) {
-          setLiveDigits(digits);
-          setLiveConfidence(Math.round(data.confidence));
-          if (digits === lastDetectedRef.current) { matchCountRef.current += 1; }
-          else { matchCountRef.current = 1; lastDetectedRef.current = digits; }
-          setMatchCount(matchCountRef.current);
-          if (matchCountRef.current >= LOCK_THRESHOLD && !readingLocked) {
-            setReadingLocked(true);
-            setNewReading(digits);
-            setOcrConfidence(Math.round(data.confidence));
-            if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
-          }
-        } else {
-          setLiveDigits(''); setLiveConfidence(0);
-          matchCountRef.current = 0; lastDetectedRef.current = ''; setMatchCount(0);
-        }
-      } catch (err) { console.error('Live scan error:', err); }
-      scanning = false;
-    }, 1500);
+    // Prepare cropped + preprocessed version for OCR (center 70% width, 25% height for meter digits)
+    const vw = canvas.width, vh = canvas.height;
+    const boxW = Math.round(vw * 0.8), boxH = Math.round(vh * 0.3);
+    const boxX = Math.round((vw - boxW) / 2), boxY = Math.round((vh - boxH) / 2);
+    const cropped = document.createElement('canvas');
+    cropped.width = boxW * 2; cropped.height = boxH * 2;
+    const cCtx = cropped.getContext('2d');
+    cCtx.imageSmoothingEnabled = false;
+    cCtx.drawImage(canvas, boxX, boxY, boxW, boxH, 0, 0, boxW * 2, boxH * 2);
+    preprocessImage(cropped);
+
+    // Run OCR on the cropped area
+    try {
+      await initOcrWorker();
+      const dataUrl = cropped.toDataURL('image/png');
+      const { data } = await workerRef.current.recognize(dataUrl);
+      let digits = data.text.replace(/[^0-9.]/g, '').replace(/^\.+|\.+$/g, '').trim();
+      digits = digits.replace(/\.{2,}/g, '.');
+
+      if (digits && digits.length >= 3) {
+        setNewReading(digits);
+        setOcrConfidence(Math.round(data.confidence));
+      } else {
+        setOcrConfidence(0);
+        setToast('Could not read digits clearly. You can enter manually or retake.');
+        setTimeout(() => setToast(''), 4000);
+      }
+    } catch (err) {
+      console.error('OCR error:', err);
+      setToast('OCR failed. Please enter the reading manually.');
+      setTimeout(() => setToast(''), 4000);
+    }
+    setOcrProcessing(false);
   }
 
   function stopCameraStream() {
-    if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
   }
 
@@ -406,13 +392,8 @@ function ReadingsContent() {
   }
 
   function acceptReading() {
-    if (videoRef.current && videoRef.current.videoWidth) {
-      const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight;
-      canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
-      setCapturedImage(canvas.toDataURL('image/jpeg', 0.85));
-    }
-    stopCameraStream();
+    setCapturedImage(photoPreview);
+    setPhotoPreview(null);
     terminateWorker();
     setShowCamera(false);
     setToast(`Reading confirmed: ${newReading}`);
@@ -421,14 +402,16 @@ function ReadingsContent() {
 
   function closeCamera() {
     stopCameraStream(); terminateWorker(); setShowCamera(false);
-    setLiveDigits(''); setReadingLocked(false);
+    setPhotoPreview(null); setOcrProcessing(false);
   }
 
-  function retryLiveScan() {
-    setReadingLocked(false); setLiveDigits(''); setLiveConfidence(0);
-    setMatchCount(0); matchCountRef.current = 0; lastDetectedRef.current = '';
-    setNewReading(''); setOcrConfidence(null);
-    startLiveScan();
+  function retakePhoto() {
+    setPhotoPreview(null);
+    setOcrProcessing(false);
+    setOcrConfidence(null);
+    setNewReading('');
+    // Reopen camera stream
+    openCamera();
   }
 
   // ---- Session functions ----
@@ -863,12 +846,12 @@ function ReadingsContent() {
         </div>
       )}
 
-      {/* Camera Overlay — Live Scanning */}
+      {/* Camera Overlay — Snap Photo */}
       {showCamera && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
           <div className="flex items-center justify-between p-4">
             <div>
-              <h3 className="text-white font-bold text-sm">Live Meter Scanner</h3>
+              <h3 className="text-white font-bold text-sm">Meter Photo</h3>
               {(selectedPitchObj || currentSessionPitch) && (
                 <p className="text-white/60 text-xs">
                   Pitch {(selectedPitchObj || currentSessionPitch)?.pitch_number} — {(selectedPitchObj || currentSessionPitch)?.customer_name || 'Vacant'}
@@ -881,60 +864,88 @@ function ReadingsContent() {
               </svg>
             </button>
           </div>
-          <div className="flex-1 flex items-center justify-center relative">
-            <video ref={videoRef} autoPlay playsInline className="max-w-full max-h-full" />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className={`w-[70%] h-[15%] border-2 rounded-lg flex items-center justify-center transition-colors ${
-                readingLocked ? 'border-green-400 bg-green-500/10' :
-                liveDigits ? 'border-amber-400 bg-amber-500/5' : 'border-white/60'
-              }`}>
-                {!liveDigits && !readingLocked && <span className="text-white/40 text-xs">Align meter digits here</span>}
+
+          {/* Live camera view (before capture) */}
+          {!photoPreview && (
+            <>
+              <div className="flex-1 flex items-center justify-center relative">
+                <video ref={videoRef} autoPlay playsInline className="max-w-full max-h-full" />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-[80%] h-[30%] border-2 border-white/60 rounded-lg flex items-center justify-center">
+                    <span className="text-white/50 text-xs bg-black/30 px-2 py-1 rounded">Centre meter digits here</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          <div className="p-4 flex flex-col items-center gap-3">
-            <div className="bg-slate-900/80 backdrop-blur rounded-xl px-6 py-3 min-w-[250px] text-center">
-              {readingLocked ? (
-                <div>
-                  <div className="flex items-center justify-center gap-2 mb-1">
-                    <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className="text-green-400 text-xs font-semibold uppercase tracking-wider">Reading Confirmed</span>
-                  </div>
-                  <p className="text-white font-mono text-3xl font-bold tracking-wider">{liveDigits}</p>
-                  <p className="text-white/50 text-xs mt-1">{liveConfidence}% confidence — matched {matchCount}x</p>
-                </div>
-              ) : liveDigits ? (
-                <div>
-                  <p className="text-amber-400 text-xs font-semibold uppercase tracking-wider mb-1">Scanning... ({matchCount}/{LOCK_THRESHOLD})</p>
-                  <p className="text-white font-mono text-3xl font-bold tracking-wider">{liveDigits}</p>
-                  <p className="text-white/40 text-xs mt-1">Hold steady — confirming reading...</p>
-                </div>
-              ) : (
-                <div>
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="animate-spin w-4 h-4 border-2 border-teal-400 border-t-transparent rounded-full" />
-                    <span className="text-teal-400 text-xs font-semibold uppercase tracking-wider">Scanning</span>
-                  </div>
-                  <p className="text-white/40 text-xs mt-2">Point camera at meter digits inside the box</p>
-                </div>
-              )}
-            </div>
-            {readingLocked ? (
-              <div className="flex items-center gap-3">
-                <button onClick={retryLiveScan} className="px-5 py-2.5 bg-slate-700 text-white rounded-xl text-sm font-medium hover:bg-slate-600 transition-colors">Rescan</button>
-                <button onClick={acceptReading} className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-500 transition-colors flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  Accept Reading
+              <div className="p-4 flex flex-col items-center gap-3">
+                <button
+                  onClick={capturePhoto}
+                  className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform border-4 border-white/30"
+                >
+                  <div className="w-16 h-16 bg-white rounded-full border-2 border-slate-300" />
+                </button>
+                <p className="text-white/50 text-xs">Tap to take photo of meter display</p>
+                <button onClick={closeCamera} className="px-5 py-2 bg-slate-700/80 text-white/70 rounded-xl text-xs hover:bg-slate-600 transition-colors">
+                  Cancel — enter manually
                 </button>
               </div>
-            ) : (
-              <button onClick={closeCamera} className="px-5 py-2.5 bg-slate-700/80 text-white/70 rounded-xl text-xs hover:bg-slate-600 transition-colors">
-                Cancel — enter manually instead
-              </button>
-            )}
-          </div>
+            </>
+          )}
+
+          {/* Photo preview + OCR result */}
+          {photoPreview && (
+            <>
+              <div className="flex-1 flex items-center justify-center p-4">
+                <img src={photoPreview} className="max-w-full max-h-full rounded-xl object-contain" alt="Meter photo" />
+              </div>
+              <div className="p-4 flex flex-col items-center gap-3">
+                {ocrProcessing ? (
+                  <div className="bg-slate-900/80 backdrop-blur rounded-xl px-6 py-4 min-w-[250px] text-center">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <div className="animate-spin w-5 h-5 border-2 border-teal-400 border-t-transparent rounded-full" />
+                      <span className="text-teal-400 text-sm font-semibold">Reading digits...</span>
+                    </div>
+                    <p className="text-white/40 text-xs">Processing photo with OCR</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-slate-900/80 backdrop-blur rounded-xl px-6 py-4 min-w-[250px] text-center">
+                      {newReading && ocrConfidence > 0 ? (
+                        <div>
+                          <div className="flex items-center justify-center gap-2 mb-1">
+                            <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span className="text-green-400 text-xs font-semibold uppercase tracking-wider">Reading Detected</span>
+                          </div>
+                          <p className="text-white font-mono text-3xl font-bold tracking-wider">{newReading}</p>
+                          <p className="text-white/50 text-xs mt-1">{ocrConfidence}% confidence</p>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wider mb-1">Could not read digits</p>
+                          <p className="text-white/40 text-xs">Try taking a clearer photo or enter manually</p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button onClick={retakePhoto} className="px-5 py-2.5 bg-slate-700 text-white rounded-xl text-sm font-medium hover:bg-slate-600 transition-colors">
+                        Retake
+                      </button>
+                      {newReading && (
+                        <button onClick={acceptReading} className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-500 transition-colors flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                          Accept Reading
+                        </button>
+                      )}
+                      <button onClick={() => { setShowCamera(false); setPhotoPreview(null); terminateWorker(); }} className="px-4 py-2.5 bg-slate-700/60 text-white/60 rounded-xl text-xs hover:bg-slate-600 transition-colors">
+                        Enter Manually
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1001,15 +1012,15 @@ function ReadingsContent() {
                 )}
                 {selectedPitch && !editingReading && (
                   <div className="mb-3">
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Live Scan Meter (optional)</label>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Photo Meter Reading (optional)</label>
                     {!capturedImage ? (
                       <button onClick={openCamera} className="w-full py-8 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 hover:border-teal-400 hover:text-teal-600 transition-colors flex flex-col items-center gap-2">
                         <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
-                        <span className="font-medium">Tap to scan meter display</span>
-                        <span className="text-xs text-slate-400">Camera reads digits automatically — hold steady to confirm</span>
+                        <span className="font-medium">Take photo of meter</span>
+                        <span className="text-xs text-slate-400">Snap a photo — OCR reads the digits for you</span>
                       </button>
                     ) : (
                       <div>
@@ -1247,8 +1258,8 @@ function ReadingsContent() {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
-                            <span className="font-medium">Scan Meter Display</span>
-                            <span className="text-xs text-slate-400">Camera reads digits live — hold steady to confirm</span>
+                            <span className="font-medium">Take Photo of Meter</span>
+                            <span className="text-xs text-slate-400">Snap a photo — OCR reads the digits</span>
                           </button>
                         ) : (
                           <div>
