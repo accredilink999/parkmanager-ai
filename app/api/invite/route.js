@@ -2,10 +2,12 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+}
 
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.ionos.co.uk';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
@@ -29,7 +31,7 @@ export async function POST(request) {
     const tempPassword = generatePassword();
 
     // Create user in Supabase auth
-    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    const { data: userData, error: authError } = await getSupabaseAdmin().auth.admin.createUser({
       email,
       password: tempPassword,
       email_confirm: true,
@@ -45,7 +47,7 @@ export async function POST(request) {
 
     // Create profile linked to the same org
     const mappedRole = role === 'admin' ? 'admin' : role === 'developer' ? 'developer' : role === 'accounts' ? 'accounts' : 'customer';
-    await supabaseAdmin.from('profiles').upsert({
+    await getSupabaseAdmin().from('profiles').upsert({
       id: userData.user.id,
       email,
       full_name: name || email.split('@')[0],
