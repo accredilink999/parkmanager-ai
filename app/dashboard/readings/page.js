@@ -32,12 +32,6 @@ function ReadingsContent() {
   // Edit mode
   const [editingReading, setEditingReading] = useState(null);
 
-  // QR Scanner
-  const [showScanner, setShowScanner] = useState(false);
-  const [scanError, setScanError] = useState('');
-  const scannerRef = useRef(null);
-  const html5QrCodeRef = useRef(null);
-
   // Camera / Snap-Photo OCR
   const [showCamera, setShowCamera] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
@@ -255,7 +249,7 @@ function ReadingsContent() {
           setSession(prev => {
             if (!prev || prev.id !== sessionId) return prev;
             const updated = { ...prev, readings: readingsMap };
-            const totalPitches = pitches.filter(p => p.meter_id).length;
+            const totalPitches = pitches.length;
             if (newCount >= totalPitches && prev.status === 'active') {
               updated.status = 'complete';
               updated.completed_at = new Date().toISOString();
@@ -431,8 +425,8 @@ function ReadingsContent() {
   }
 
   function pitchesForSession() {
-    // Session covers all pitches with meters
-    return pitches.filter(p => p.meter_id);
+    // Session covers all pitches — meter_id is optional
+    return pitches;
   }
 
   // ---- Save / Update reading ----
@@ -534,82 +528,6 @@ function ReadingsContent() {
     }
     setToast('Reading deleted');
     setTimeout(() => setToast(''), 3000);
-  }
-
-  // ---- QR Scanner ----
-  async function startScanner() {
-    setShowScanner(true);
-    setScanError('');
-    try {
-      const { Html5Qrcode } = await import('html5-qrcode');
-      await new Promise(r => setTimeout(r, 200));
-      const scanner = new Html5Qrcode('qr-reader');
-      html5QrCodeRef.current = scanner;
-
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decodedText) => {
-          try {
-            const url = new URL(decodedText);
-            const pitchId = url.searchParams.get('pitch');
-            if (pitchId) {
-              const found = pitches.find(p => p.id === pitchId);
-              if (found) {
-                handleQrPitchFound(found);
-              } else {
-                setToast('Pitch not found for this QR code');
-                setTimeout(() => setToast(''), 3000);
-              }
-            }
-          } catch {
-            const found = pitches.find(p => decodedText.includes(p.id) || decodedText.includes(p.pitch_number));
-            if (found) handleQrPitchFound(found);
-          }
-          stopScanner();
-        },
-        () => {}
-      );
-    } catch (err) {
-      setScanError(err.message || 'Camera access denied. Please allow camera permissions.');
-    }
-  }
-
-  function handleQrPitchFound(found) {
-    if (session && session.status === 'active') {
-      // In session mode: jump to this pitch and switch to session tab
-      setTab('session');
-      const sPitches = pitchesForSession();
-      const idx = sPitches.findIndex(p => p.id === found.id);
-      const alreadyDone = !!session.readings[found.id];
-      if (idx >= 0) {
-        setSessionPitchIndex(idx);
-        setNewReading('');
-        setCapturedImage(null);
-        setOcrConfidence(null);
-      }
-      setToast(`Pitch ${found.pitch_number} — ${found.customer_name || 'Vacant'} — Meter: ${found.meter_id || 'N/A'}${alreadyDone ? ' (already read)' : ''}`);
-      // Auto-open camera if not already read
-      if (!alreadyDone && idx >= 0) {
-        setTimeout(() => openCamera(), 600);
-      }
-    } else {
-      // Individual mode: select pitch, show form, auto-open camera
-      setTab('readings');
-      setSelectedPitch(found.id);
-      setShowForm(true);
-      setToast(`Pitch ${found.pitch_number} — ${found.customer_name || 'Vacant'} — Meter: ${found.meter_id || 'N/A'}`);
-      setTimeout(() => openCamera(), 600);
-    }
-    setTimeout(() => setToast(''), 4000);
-  }
-
-  async function stopScanner() {
-    setShowScanner(false);
-    if (html5QrCodeRef.current) {
-      try { await html5QrCodeRef.current.stop(); html5QrCodeRef.current.clear(); } catch {}
-      html5QrCodeRef.current = null;
-    }
   }
 
   // ---- Camera & Snap-Photo OCR ----
@@ -753,7 +671,7 @@ function ReadingsContent() {
     // Block if there's an incomplete session
     const incomplete = getIncompleteSession();
     if (incomplete) {
-      const sPitchCount = pitches.filter(p => p.meter_id).length;
+      const sPitchCount = pitches.length;
       const sReadCount = Object.keys(incomplete.readings).length;
       setToast(`Complete the current session first (${sReadCount}/${sPitchCount} done). Resuming...`);
       setTimeout(() => setToast(''), 4000);
@@ -1310,7 +1228,7 @@ function ReadingsContent() {
     }
 
     const rate = parseFloat(rateStr) || 0.34;
-    const sPitches = pitches.filter(p => p.meter_id);
+    const sPitches = pitches;
 
     // Header
     doc.setFontSize(18);
@@ -1463,7 +1381,7 @@ function ReadingsContent() {
     // Generate PDF in memory
     const { default: jsPDF } = await import('jspdf');
     const doc = new jsPDF();
-    const sPitches = pitches.filter(p => p.meter_id);
+    const sPitches = pitches;
     const completedReadings = Object.entries(sess.readings);
     const totalUsage = completedReadings.reduce((sum, [, r]) => sum + (r.usage_kwh || 0), 0);
     const totalCost = (totalUsage * rate).toFixed(2);
@@ -1642,15 +1560,6 @@ function ReadingsContent() {
             <h1 className="text-lg font-bold text-slate-900">Meter Readings</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={startScanner}
-              className="px-3 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-500 transition-colors flex items-center gap-1.5"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-              </svg>
-              Scan QR
-            </button>
             {tab === 'readings' && (
               <button
                 onClick={() => { resetForm(); setShowForm(true); }}
@@ -1720,34 +1629,6 @@ function ReadingsContent() {
           </button>
         </div>
       </div>
-
-      {/* QR Scanner Modal */}
-      {showScanner && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Scan Meter QR Code</h3>
-                {session && session.status === 'active' && (
-                  <p className="text-xs text-teal-600 font-medium">Session active — {sessionCompleted}/{sessionTotal} read</p>
-                )}
-              </div>
-              <button onClick={stopScanner} className="text-slate-400 hover:text-slate-600">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div id="qr-reader" ref={scannerRef} className="rounded-xl overflow-hidden" />
-            {scanError && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{scanError}</div>}
-            <p className="text-xs text-slate-400 text-center mt-3">
-              {session && session.status === 'active'
-                ? 'Scan QR to jump to that pitch in your session — camera opens automatically'
-                : 'Scan the QR label on the meter — identifies pitch and opens camera for reading'}
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Camera Overlay — Snap Photo */}
       {showCamera && (
@@ -1913,38 +1794,11 @@ function ReadingsContent() {
                     </div>
                   </div>
                 )}
-                {selectedPitch && !editingReading && (
-                  <div className="mb-3">
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Photo Meter Reading (optional)</label>
-                    {!capturedImage ? (
-                      <button onClick={openCamera} className="w-full py-8 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 hover:border-teal-400 hover:text-teal-600 transition-colors flex flex-col items-center gap-2">
-                        <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="font-medium">Take photo of meter</span>
-                        <span className="text-xs text-slate-400">Snap a photo — OCR reads the digits for you</span>
-                      </button>
-                    ) : (
-                      <div>
-                        <img src={capturedImage} className="w-full rounded-xl border max-h-48 object-cover" alt="Meter photo" />
-                        <div className="flex items-center gap-2 mt-2">
-                          {ocrConfidence !== null && ocrConfidence > 0 && (
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ocrConfidence > 80 ? 'bg-green-100 text-green-700' : ocrConfidence > 50 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                              OCR: {ocrConfidence}% confidence
-                            </span>
-                          )}
-                          <button onClick={() => { setCapturedImage(null); setOcrConfidence(null); openCamera(); }} className="text-xs text-teal-600 hover:text-teal-800 font-medium">Rescan</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Meter Reading (kWh) *</label>
                     <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" />
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" autoFocus />
                     {editingReading && (
                       <p className="text-xs text-slate-400 mt-1">Previous: {Number(editingReading.previous_reading).toLocaleString()} | Original: {Number(editingReading.reading).toLocaleString()}</p>
                     )}
@@ -1957,6 +1811,31 @@ function ReadingsContent() {
                     </button>
                   </div>
                 </div>
+                {selectedPitch && !editingReading && (
+                  <div className="mt-3">
+                    {!capturedImage ? (
+                      <button onClick={openCamera} className="w-full py-4 border border-dashed border-slate-300 rounded-xl text-sm text-slate-400 hover:border-teal-400 hover:text-teal-600 transition-colors flex items-center justify-center gap-2">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span className="font-medium">Or snap a photo (OCR)</span>
+                      </button>
+                    ) : (
+                      <div>
+                        <img src={capturedImage} className="w-full rounded-xl border max-h-36 object-cover" alt="Meter photo" />
+                        <div className="flex items-center gap-2 mt-2">
+                          {ocrConfidence !== null && ocrConfidence > 0 && (
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ocrConfidence > 80 ? 'bg-green-100 text-green-700' : ocrConfidence > 50 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                              OCR: {ocrConfidence}% confidence
+                            </span>
+                          )}
+                          <button onClick={() => { setCapturedImage(null); setOcrConfidence(null); openCamera(); }} className="text-xs text-teal-600 hover:text-teal-800 font-medium">Rescan</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1965,7 +1844,7 @@ function ReadingsContent() {
               <div className="flex justify-center py-12"><div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full" /></div>
             ) : readings.length === 0 ? (
               <div className="bg-white rounded-xl border p-8 text-center">
-                <p className="text-sm text-slate-400">No readings yet. Click &quot;New Reading&quot; or scan a QR code to record one.</p>
+                <p className="text-sm text-slate-400">No readings yet. Click &quot;New Reading&quot; to record one.</p>
               </div>
             ) : (
               <div className="bg-white rounded-xl border overflow-hidden">
@@ -2014,7 +1893,7 @@ function ReadingsContent() {
                 {/* Incomplete session warning — must finish before starting new */}
                 {hasIncompleteSession() && (() => {
                   const inc = getIncompleteSession();
-                  const sPitchCount = pitches.filter(p => p.meter_id).length;
+                  const sPitchCount = pitches.length;
                   const sReadCount = Object.keys(inc.readings).length;
                   const remaining = sPitchCount - sReadCount;
                   return (
@@ -2046,13 +1925,13 @@ function ReadingsContent() {
                     <h3 className="text-base font-bold text-slate-900 mb-1">Meter Reading Session</h3>
                     <p className="text-sm text-slate-500 mb-4">
                       Walk around the park and record every meter in one session.<br />
-                      {pitches.filter(p => p.meter_id).length} meters to read. Saves progress automatically.
+                      {pitches.length} meters to read. Saves progress automatically.
                     </p>
                     <div className="flex flex-col items-center gap-2">
                       <button onClick={startNewSession} disabled={hasIncompleteSession()} className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         Start New Session
                       </button>
-                      {pitches.filter(p => p.meter_id).length > 0 && (
+                      {pitches.length > 0 && (
                         <button onClick={() => setShowBaseline(true)} className="px-4 py-2 text-teal-600 text-xs font-medium hover:text-teal-800">
                           Set baseline meter readings &rarr;
                         </button>
@@ -2070,7 +1949,7 @@ function ReadingsContent() {
                       <button onClick={() => { setShowBaseline(false); setBaselineReadings({}); }} className="text-xs text-slate-400 hover:text-slate-600">Cancel</button>
                     </div>
                     <div className="space-y-2 max-h-[50vh] overflow-y-auto">
-                      {pitches.filter(p => p.meter_id).map(p => {
+                      {pitches.map(p => {
                         const lastReading = readings.find(r => r.pitch_id === p.id || r.pitch?.id === p.id);
                         return (
                         <div key={p.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
@@ -2112,7 +1991,7 @@ function ReadingsContent() {
                     </div>
                     <div className="divide-y divide-slate-100">
                       {pastSessions.sort((a, b) => new Date(b.started_at) - new Date(a.started_at)).map(s => {
-                        const sPitchCount = pitches.filter(p => p.meter_id).length;
+                        const sPitchCount = pitches.length;
                         const sReadCount = Object.keys(s.readings).length;
                         const sPercent = sPitchCount > 0 ? Math.round((sReadCount / sPitchCount) * 100) : 0;
                         return (
@@ -2312,17 +2191,33 @@ function ReadingsContent() {
                       );
                     })()}
 
-                    {/* Camera button */}
+                    {/* Reading input — manual entry is the primary method */}
                     {!currentPitchDone && (
-                      <div className="mb-3">
+                      <div className="space-y-3">
+                        <div className="flex items-end gap-2">
+                          <div className="flex-1">
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Reading (kWh)</label>
+                            <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" autoFocus />
+                          </div>
+                          <button onClick={saveSessionReading} disabled={!newReading || saving}
+                            className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-emerald-500 transition-colors">
+                            {saving ? 'Saving...' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Camera — optional OCR helper */}
+                    {!currentPitchDone && (
+                      <div className="mt-3">
                         {!capturedImage ? (
-                          <button onClick={openCamera} className="w-full py-6 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 hover:border-teal-400 hover:text-teal-600 transition-colors flex flex-col items-center gap-2">
-                            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <button onClick={openCamera} className="w-full py-4 border border-dashed border-slate-300 rounded-xl text-sm text-slate-400 hover:border-teal-400 hover:text-teal-600 transition-colors flex items-center justify-center gap-2">
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
-                            <span className="font-medium">Take Photo of Meter</span>
-                            <span className="text-xs text-slate-400">Snap a photo — OCR reads the digits</span>
+                            <span className="font-medium">Or snap a photo (OCR)</span>
                           </button>
                         ) : (
                           <div>
@@ -2340,28 +2235,15 @@ function ReadingsContent() {
                       </div>
                     )}
 
-                    {/* Reading input */}
+                    {/* Dormant button */}
                     {!currentPitchDone && (
-                      <div className="space-y-3">
-                        <div className="flex items-end gap-2">
-                          <div className="flex-1">
-                            <label className="block text-xs font-medium text-slate-500 mb-1">Reading (kWh)</label>
-                            <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" />
-                          </div>
-                          <button onClick={saveSessionReading} disabled={!newReading || saving}
-                            className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-emerald-500 transition-colors">
-                            {saving ? 'Saving...' : 'Save'}
-                          </button>
-                        </div>
-                        <button onClick={() => markDormant(currentSessionPitch)}
-                          className="w-full py-2 bg-slate-100 text-slate-500 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors flex items-center justify-center gap-1.5">
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                          </svg>
-                          Mark as Dormant — no reading needed
-                        </button>
-                      </div>
+                      <button onClick={() => markDormant(currentSessionPitch)}
+                        className="w-full mt-3 py-2 bg-slate-100 text-slate-500 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors flex items-center justify-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                        Mark as Dormant — no reading needed
+                      </button>
                     )}
 
                     {/* Gas Cylinder Entry */}
