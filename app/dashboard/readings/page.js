@@ -695,6 +695,11 @@ function ReadingsContent() {
     const completedReadings = Object.entries(sess.readings);
     const totalUsage = completedReadings.reduce((sum, [, r]) => sum + (r.usage_kwh || 0), 0);
     const totalCost = totalUsage * rate;
+    const showCost = recipient !== 'head_office';
+
+    // Period
+    const readDates = completedReadings.map(([, r]) => r.read_at).filter(Boolean).sort();
+    const periodStr = readDates.length > 0 ? `${new Date(readDates[0]).toLocaleDateString('en-GB')} — ${new Date(readDates[readDates.length - 1]).toLocaleDateString('en-GB')}` : new Date(sess.started_at).toLocaleDateString('en-GB');
 
     // Summary
     let y = 55;
@@ -702,10 +707,12 @@ function ReadingsContent() {
     doc.setTextColor(0);
     doc.text(`Pitches Read: ${completedReadings.length} / ${sPitches.length}`, 14, y);
     doc.text(`Total Usage: ${totalUsage.toLocaleString()} kWh`, 100, y);
-    doc.text(`Total Cost: £${totalCost.toFixed(2)} @ £${rate}/kWh`, 14, y + 6);
+    y += 6;
+    doc.text(`Period: ${periodStr}`, 14, y);
+    if (showCost) doc.text(`Total Cost: £${totalCost.toFixed(2)} @ £${rate}/kWh`, 100, y);
 
     // Table header
-    y += 16;
+    y += 12;
     doc.setFillColor(241, 245, 249);
     doc.rect(14, y - 4, 182, 8, 'F');
     doc.setFontSize(8);
@@ -713,10 +720,10 @@ function ReadingsContent() {
     doc.text('Pitch', 16, y);
     doc.text('Customer', 36, y);
     doc.text('Meter ID', 86, y);
-    doc.text('Previous', 112, y);
-    doc.text('Reading', 134, y);
-    doc.text('Usage (kWh)', 156, y);
-    doc.text('Cost', 182, y);
+    doc.text('Previous (From)', 108, y);
+    doc.text('Current (To)', 138, y);
+    doc.text('Usage (kWh)', 166, y);
+    if (showCost) doc.text('Cost', 190, y);
 
     // Table rows
     y += 6;
@@ -732,10 +739,10 @@ function ReadingsContent() {
         doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
         doc.text(r.meter_id || p.meter_id || '', 86, y);
         doc.text(String(r.previous_reading || 0), 112, y);
-        doc.text(String(r.reading), 134, y);
+        doc.text(String(r.reading), 142, y);
         doc.setTextColor(16, 185, 129);
-        doc.text(String(r.usage_kwh || 0), 160, y);
-        doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 182, y);
+        doc.text(String(r.usage_kwh || 0), 170, y);
+        if (showCost) doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 190, y);
         doc.setTextColor(0);
       } else {
         doc.setTextColor(180);
@@ -804,6 +811,11 @@ function ReadingsContent() {
     const completedReadings = Object.entries(sess.readings);
     const totalUsage = completedReadings.reduce((sum, [, r]) => sum + (r.usage_kwh || 0), 0);
     const totalCost = (totalUsage * rate).toFixed(2);
+    const showCost = recipientType !== 'head_office';
+
+    // Period from reading dates
+    const readDates = completedReadings.map(([, r]) => r.read_at).filter(Boolean).sort();
+    const periodStr = readDates.length > 0 ? `${new Date(readDates[0]).toLocaleDateString('en-GB')} — ${new Date(readDates[readDates.length - 1]).toLocaleDateString('en-GB')}` : new Date(sess.started_at).toLocaleDateString('en-GB');
 
     // Header
     doc.setFontSize(18);
@@ -825,10 +837,12 @@ function ReadingsContent() {
     doc.setTextColor(0);
     doc.text(`Pitches Read: ${completedReadings.length} / ${sPitches.length}`, 14, y);
     doc.text(`Total Usage: ${totalUsage.toLocaleString()} kWh`, 100, y);
-    doc.text(`Total Cost: £${totalCost} @ £${rate}/kWh`, 14, y + 6);
+    y += 6;
+    doc.text(`Period: ${periodStr}`, 14, y);
+    if (showCost) doc.text(`Total Cost: £${totalCost} @ £${rate}/kWh`, 100, y);
 
     // Table header
-    y += 16;
+    y += 12;
     doc.setFillColor(241, 245, 249);
     doc.rect(14, y - 4, 182, 8, 'F');
     doc.setFontSize(8);
@@ -836,10 +850,10 @@ function ReadingsContent() {
     doc.text('Pitch', 16, y);
     doc.text('Customer', 36, y);
     doc.text('Meter ID', 86, y);
-    doc.text('Previous', 112, y);
-    doc.text('Reading', 134, y);
-    doc.text('Usage', 156, y);
-    doc.text('Cost', 182, y);
+    doc.text('Previous (From)', 108, y);
+    doc.text('Current (To)', 138, y);
+    doc.text('Usage (kWh)', 166, y);
+    if (showCost) doc.text('Cost', 190, y);
 
     // Table rows
     y += 6;
@@ -853,10 +867,10 @@ function ReadingsContent() {
         doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
         doc.text(r.meter_id || p.meter_id || '', 86, y);
         doc.text(String(r.previous_reading || 0), 112, y);
-        doc.text(String(r.reading), 134, y);
+        doc.text(String(r.reading), 142, y);
         doc.setTextColor(16, 185, 129);
-        doc.text(String(r.usage_kwh || 0), 160, y);
-        doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 182, y);
+        doc.text(String(r.usage_kwh || 0), 170, y);
+        if (showCost) doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 190, y);
         doc.setTextColor(0);
       } else {
         doc.setTextColor(180);
@@ -879,7 +893,7 @@ function ReadingsContent() {
     const pdfBase64 = doc.output('datauristring').split(',')[1];
     const fileName = `MeterReadings-${new Date(sess.started_at).toISOString().slice(0, 10)}.pdf`;
 
-    // Build email body (summary HTML)
+    // Build email body (summary HTML) — head office: no cost, just usage/period
     const emailBody = `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
         <div style="background:#059669;padding:20px;border-radius:12px 12px 0 0;">
@@ -888,14 +902,14 @@ function ReadingsContent() {
         <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;">
           <p style="font-size:14px;color:#1e293b;margin:0 0 8px;">
             <strong>Session:</strong> ${sess.name || 'Reading Session'}<br/>
-            <strong>Date:</strong> ${new Date(sess.started_at).toLocaleDateString('en-GB')}<br/>
+            <strong>Period:</strong> ${periodStr}<br/>
             <strong>Status:</strong> ${sess.completed_at ? 'Completed' : 'In Progress'}
           </p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0;">
             <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Pitches Read</td><td style="padding:8px 0;font-weight:700;font-size:13px;">${completedReadings.length} / ${sPitches.length}</td></tr>
             <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Total Usage</td><td style="padding:8px 0;font-weight:700;font-size:13px;">${totalUsage.toLocaleString()} kWh</td></tr>
-            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Unit Rate</td><td style="padding:8px 0;font-size:13px;">£${rate.toFixed(2)}/kWh</td></tr>
-            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Total Cost</td><td style="padding:8px 0;font-weight:700;font-size:15px;color:#059669;">£${totalCost}</td></tr>
+            ${showCost ? `<tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Unit Rate</td><td style="padding:8px 0;font-size:13px;">£${rate.toFixed(2)}/kWh</td></tr>
+            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Total Cost</td><td style="padding:8px 0;font-weight:700;font-size:15px;color:#059669;">£${totalCost}</td></tr>` : ''}
           </table>
           <p style="font-size:13px;color:#475569;">Please find the full meter reading report attached as a PDF.</p>
           <p style="font-size:11px;color:#94a3b8;margin-top:20px;">Generated by ${siteName} — ParkManagerAI</p>
