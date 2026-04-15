@@ -380,18 +380,19 @@ export default function BillsPage() {
                       <span className="text-sm text-slate-500">{b.pitch?.customer_name || '—'}</span>
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">
-                      {b.period_start && b.period_end ? (
-                        <>{new Date(b.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - {new Date(b.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</>
-                      ) : (
-                        b.created_at ? new Date(b.created_at).toLocaleDateString('en-GB') : '—'
+                      Billed: {b.period_end ? new Date(b.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : b.created_at ? new Date(b.created_at).toLocaleDateString('en-GB') : '—'}
+                      {b.period_start && b.period_end && (
+                        <span className="text-slate-300 ml-1">
+                          (period: {new Date(b.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — {new Date(b.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })})
+                        </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Usage */}
+                  {/* Due kWh */}
                   <div className="text-right hidden sm:block">
-                    <span className="text-xs text-slate-400">Usage</span>
-                    <p className="text-sm font-mono font-medium text-slate-700">{Number(b.usage_kwh).toLocaleString()} kWh</p>
+                    <span className="text-xs text-slate-400">Due kWh</span>
+                    <p className="text-sm font-mono font-medium text-slate-700">{Number(b.usage_kwh).toLocaleString()}</p>
                   </div>
 
                   {/* Amount */}
@@ -422,10 +423,30 @@ export default function BillsPage() {
                 {/* Expanded detail */}
                 {expandedBill === b.id && (
                   <div className="border-t border-slate-100 bg-slate-50 px-4 py-4">
+                    {/* Billing Date */}
+                    <div className="bg-white rounded-lg border p-3 mb-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-slate-400 font-medium">Billing Date</p>
+                          <p className="text-sm font-bold text-slate-900">
+                            {b.period_end ? new Date(b.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                          </p>
+                        </div>
+                        {b.period_start && b.period_end && (
+                          <div className="text-right">
+                            <p className="text-xs text-slate-400 font-medium">Billing Period</p>
+                            <p className="text-sm text-slate-600">
+                              {new Date(b.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} &mdash; {new Date(b.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-                      {/* Start Reading */}
+                      {/* Previous Reading (From) */}
                       <div className="bg-white rounded-lg border p-3">
-                        <p className="text-xs text-slate-400 font-medium mb-1">Start Reading</p>
+                        <p className="text-xs text-slate-400 font-medium mb-1">Previous Reading (From)</p>
                         <p className="text-lg font-mono font-bold text-slate-700">
                           {b.start_reading != null ? Number(b.start_reading).toLocaleString() : '—'}
                         </p>
@@ -434,9 +455,9 @@ export default function BillsPage() {
                         )}
                       </div>
 
-                      {/* End Reading */}
+                      {/* New Reading (To) */}
                       <div className="bg-white rounded-lg border p-3">
-                        <p className="text-xs text-slate-400 font-medium mb-1">End Reading</p>
+                        <p className="text-xs text-slate-400 font-medium mb-1">New Reading (To)</p>
                         <p className="text-lg font-mono font-bold text-slate-700">
                           {b.end_reading != null ? Number(b.end_reading).toLocaleString() : '—'}
                         </p>
@@ -445,23 +466,23 @@ export default function BillsPage() {
                         )}
                       </div>
 
-                      {/* Usage */}
+                      {/* Due kWh for Period */}
                       <div className="bg-white rounded-lg border p-3">
-                        <p className="text-xs text-slate-400 font-medium mb-1">Total Usage</p>
+                        <p className="text-xs text-slate-400 font-medium mb-1">Due kWh for Period</p>
                         <p className="text-lg font-bold text-blue-600">{Number(b.usage_kwh).toLocaleString()} kWh</p>
                         {b.start_reading != null && b.end_reading != null && (
                           <p className="text-xs text-slate-400 mt-0.5">
-                            {Number(b.end_reading).toLocaleString()} - {Number(b.start_reading).toLocaleString()}
+                            {Number(b.end_reading).toLocaleString()} &minus; {Number(b.start_reading).toLocaleString()}
                           </p>
                         )}
                       </div>
 
-                      {/* Cost Breakdown */}
+                      {/* Amount Due */}
                       <div className="bg-white rounded-lg border p-3">
-                        <p className="text-xs text-slate-400 font-medium mb-1">Cost Breakdown</p>
+                        <p className="text-xs text-slate-400 font-medium mb-1">Amount Due</p>
                         <p className="text-lg font-bold text-emerald-600">&pound;{Number(b.amount_gbp).toFixed(2)}</p>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          {Number(b.usage_kwh).toLocaleString()} kWh x &pound;{Number(b.unit_rate).toFixed(2)}
+                          {Number(b.usage_kwh).toLocaleString()} kWh &times; &pound;{Number(b.unit_rate).toFixed(2)}
                         </p>
                       </div>
                     </div>
@@ -469,10 +490,10 @@ export default function BillsPage() {
                     {/* Reading comparison bar */}
                     {b.start_reading != null && b.end_reading != null && (
                       <div className="bg-white rounded-lg border p-3 mb-4">
-                        <p className="text-xs font-semibold text-slate-600 mb-2">Meter Reading Comparison</p>
+                        <p className="text-xs font-semibold text-slate-600 mb-2">From &rarr; To</p>
                         <div className="flex items-center gap-3">
                           <div className="text-center">
-                            <p className="text-xs text-slate-400">Start</p>
+                            <p className="text-xs text-slate-400">From</p>
                             <p className="font-mono font-bold text-sm">{Number(b.start_reading).toLocaleString()}</p>
                           </div>
                           <div className="flex-1">
@@ -483,11 +504,11 @@ export default function BillsPage() {
                               />
                             </div>
                             <p className="text-center text-xs text-blue-600 font-bold mt-1">
-                              +{Number(b.usage_kwh).toLocaleString()} kWh
+                              +{Number(b.usage_kwh).toLocaleString()} kWh due
                             </p>
                           </div>
                           <div className="text-center">
-                            <p className="text-xs text-slate-400">End</p>
+                            <p className="text-xs text-slate-400">To</p>
                             <p className="font-mono font-bold text-sm">{Number(b.end_reading).toLocaleString()}</p>
                           </div>
                         </div>
@@ -617,9 +638,11 @@ export default function BillsPage() {
     let y = 44;
     doc.setFontSize(10);
     doc.setTextColor(0);
+    const billingDate = bill.period_end ? new Date(bill.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
     const info = [
       ['Pitch', p.pitch_number || '—'],
       ['Customer', p.customer_name || '—'],
+      ['Billing Date', billingDate],
       ['Billing Period', `${bill.period_start ? new Date(bill.period_start).toLocaleDateString('en-GB') : '—'} to ${bill.period_end ? new Date(bill.period_end).toLocaleDateString('en-GB') : '—'}`],
     ];
     info.forEach(([label, val]) => {
@@ -639,7 +662,7 @@ export default function BillsPage() {
     doc.setFontSize(11);
     doc.setFont(undefined, 'bold');
     doc.setTextColor(0);
-    doc.text('Meter Reading Comparison', 18, y + 4);
+    doc.text('Meter Readings', 18, y + 4);
 
     y += 12;
     doc.setFontSize(9);
@@ -652,13 +675,13 @@ export default function BillsPage() {
     y += 9;
     doc.setTextColor(0);
     doc.setFont(undefined, 'normal');
-    doc.text('Start Reading', 20, y);
+    doc.text('Previous Reading (From)', 20, y);
     doc.setFont(undefined, 'bold');
     doc.text(bill.start_reading != null ? Number(bill.start_reading).toLocaleString() : '—', 170, y, { align: 'right' });
 
     y += 7;
     doc.setFont(undefined, 'normal');
-    doc.text('End Reading', 20, y);
+    doc.text('New Reading (To)', 20, y);
     doc.setFont(undefined, 'bold');
     doc.text(bill.end_reading != null ? Number(bill.end_reading).toLocaleString() : '—', 170, y, { align: 'right' });
 
@@ -676,7 +699,7 @@ export default function BillsPage() {
     y += 12;
     doc.setFontSize(9);
     doc.setFont(undefined, 'normal');
-    doc.text('Usage', 20, y);
+    doc.text('Due kWh for Period', 20, y);
     doc.text(`${Number(bill.usage_kwh).toLocaleString()} kWh`, 170, y, { align: 'right' });
 
     y += 7;
