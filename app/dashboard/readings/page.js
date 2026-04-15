@@ -75,6 +75,12 @@ function ReadingsContent() {
   // Multi-device sync
   const pollCountRef = useRef(0);
 
+  // Offline / low-network support
+  const [isOnline, setIsOnline] = useState(true);
+  const [offlineQueue, setOfflineQueue] = useState([]);
+  const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
+
   // Helper: build readings map from meter_readings rows
   function buildReadingsMap(readingsData) {
     const map = {};
@@ -93,6 +99,115 @@ function ReadingsContent() {
     });
     return map;
   }
+
+  // ---- Offline cache helpers ----
+  function cacheToLocal(key, data) {
+    try { localStorage.setItem(`pm_cache_${key}`, JSON.stringify({ data, ts: Date.now() })); } catch {}
+  }
+  function getFromCache(key) {
+    try {
+      const raw = localStorage.getItem(`pm_cache_${key}`);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  }
+  function getOfflineQueue() {
+    try { return JSON.parse(localStorage.getItem('pm_offline_queue') || '[]'); } catch { return []; }
+  }
+  function saveOfflineQueue(queue) {
+    try { localStorage.setItem('pm_offline_queue', JSON.stringify(queue)); } catch {}
+    setOfflineQueue(queue);
+  }
+  function addToOfflineQueue(item) {
+    const queue = [...getOfflineQueue(), { ...item, queued_at: new Date().toISOString() }];
+    saveOfflineQueue(queue);
+    return queue;
+  }
+
+  // ---- Flush offline queue when online ----
+  async function flushOfflineQueue() {
+    if (!supabase || syncingRef.current) return;
+    const queue = getOfflineQueue();
+    if (queue.length === 0) return;
+
+    syncingRef.current = true;
+    setSyncing(true);
+    setToast(`Syncing ${queue.length} offline reading(s)...`);
+
+    const failed = [];
+    for (const item of queue) {
+      try {
+        if (item.type === 'reading') {
+          // Check for duplicate before inserting
+          const { data: existing } = await supabase
+            .from('meter_readings')
+            .select('id')
+            .eq('session_id', item.payload.session_id)
+            .eq('pitch_id', item.payload.pitch_id)
+            .limit(1);
+          if (!existing || existing.length === 0) {
+            await supabase.from('meter_readings').insert(item.payload);
+          }
+        } else if (item.type === 'session_update') {
+          await supabase.from('reading_sessions').update({
+            status: item.status,
+            completed_at: item.completed_at || null,
+          }).eq('id', item.session_id);
+        } else if (item.type === 'dormant') {
+          const { data: existing } = await supabase
+            .from('meter_readings')
+            .select('id')
+            .eq('session_id', item.payload.session_id)
+            .eq('pitch_id', item.payload.pitch_id)
+            .limit(1);
+          if (!existing || existing.length === 0) {
+            await supabase.from('meter_readings').insert(item.payload);
+          }
+        }
+      } catch {
+        failed.push(item);
+      }
+    }
+
+    saveOfflineQueue(failed);
+    syncingRef.current = false;
+    setSyncing(false);
+
+    if (failed.length === 0) {
+      setToast(`All ${queue.length} offline reading(s) synced successfully`);
+    } else {
+      setToast(`${queue.length - failed.length} synced, ${failed.length} still pending`);
+    }
+    setTimeout(() => setToast(''), 4000);
+
+    // Refresh data after sync
+    loadData();
+    loadSessions();
+  }
+
+  // ---- Network status detection ----
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    setOfflineQueue(getOfflineQueue());
+
+    function goOnline() {
+      setIsOnline(true);
+      setToast('Back online — syncing...');
+      setTimeout(() => setToast(''), 2000);
+      setTimeout(() => flushOfflineQueue(), 500);
+    }
+    function goOffline() {
+      setIsOnline(false);
+      setToast('You are offline — readings will be saved locally and synced when back online');
+      setTimeout(() => setToast(''), 5000);
+    }
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
@@ -190,16 +305,47 @@ function ReadingsContent() {
       setLoading(false);
       return;
     }
-    const [pitchRes, readingRes, settingsRes] = await Promise.all([
-      supabase.from('pitches').select('*').order('pitch_number'),
-      supabase.from('meter_readings').select('*, pitches(pitch_number, customer_name)').order('read_at', { ascending: false }).limit(50),
-      supabase.from('site_settings').select('*'),
-    ]);
-    setPitches(pitchRes.data || []);
-    setReadings((readingRes.data || []).map(r => ({ ...r, pitch: r.pitches })));
-    (settingsRes.data || []).forEach(s => {
-      if (s.key === 'electricity_unit_rate') setUnitRate(parseFloat(s.value) || 0.34);
-    });
+
+    try {
+      const [pitchRes, readingRes, settingsRes] = await Promise.all([
+        supabase.from('pitches').select('*').order('pitch_number'),
+        supabase.from('meter_readings').select('*, pitches(pitch_number, customer_name)').order('read_at', { ascending: false }).limit(50),
+        supabase.from('site_settings').select('*'),
+      ]);
+      const pitchData = pitchRes.data || [];
+      const readingData = (readingRes.data || []).map(r => ({ ...r, pitch: r.pitches }));
+      const settingsData = settingsRes.data || [];
+
+      setPitches(pitchData);
+      setReadings(readingData);
+      settingsData.forEach(s => {
+        if (s.key === 'electricity_unit_rate') setUnitRate(parseFloat(s.value) || 0.34);
+      });
+
+      // Cache for offline use
+      cacheToLocal('pitches', pitchData);
+      cacheToLocal('readings', readingData);
+      cacheToLocal('settings', settingsData);
+    } catch (err) {
+      console.warn('Network error loading data, using cache:', err);
+      // Fall back to cached data
+      const cachedPitches = getFromCache('pitches');
+      const cachedReadings = getFromCache('readings');
+      const cachedSettings = getFromCache('settings');
+
+      if (cachedPitches?.data) setPitches(cachedPitches.data);
+      if (cachedReadings?.data) setReadings(cachedReadings.data);
+      if (cachedSettings?.data) {
+        cachedSettings.data.forEach(s => {
+          if (s.key === 'electricity_unit_rate') setUnitRate(parseFloat(s.value) || 0.34);
+        });
+      }
+
+      if (cachedPitches?.data) {
+        setToast('Loaded from cache — some data may be outdated');
+        setTimeout(() => setToast(''), 4000);
+      }
+    }
     setLoading(false);
   }
 
@@ -230,7 +376,7 @@ function ReadingsContent() {
         .select('*')
         .order('started_at', { ascending: false });
 
-      if (!sessions || sessions.length === 0) { setPastSessions([]); return; }
+      if (!sessions || sessions.length === 0) { setPastSessions([]); cacheToLocal('sessions', []); return; }
 
       // Load all readings for all sessions in one query
       const allSessionIds = sessions.map(s => s.id);
@@ -252,6 +398,7 @@ function ReadingsContent() {
       }));
 
       setPastSessions(sessionsWithReadings);
+      cacheToLocal('sessions', sessionsWithReadings);
 
       // Resume active session if exists
       const active = sessionsWithReadings.find(s => s.status === 'active');
@@ -261,7 +408,18 @@ function ReadingsContent() {
         setTab('session');
       }
     } catch (err) {
-      console.error('Failed to load sessions:', err);
+      console.warn('Network error loading sessions, using cache:', err);
+      // Fall back to cached sessions
+      const cached = getFromCache('sessions');
+      if (cached?.data) {
+        setPastSessions(cached.data);
+        const active = cached.data.find(s => s.status === 'active');
+        if (active) {
+          setSession(active);
+          setSessionPitchIndex(0);
+          setTab('session');
+        }
+      }
     }
   }
 
@@ -319,10 +477,22 @@ function ReadingsContent() {
         setReadings(prev => [newR, ...prev]);
       } else {
         try {
-          await supabase.from('meter_readings').insert(payload);
+          const { error: insertErr } = await supabase.from('meter_readings').insert(payload);
+          if (insertErr) throw insertErr;
           loadData();
         } catch (err) {
-          setToast('Error: ' + err.message);
+          // Queue for offline sync
+          addToOfflineQueue({ type: 'reading', payload, pitch_number: pitch?.pitch_number });
+          // Add to local state so it shows immediately
+          const newR = {
+            id: 'offline_' + Date.now(), ...payload,
+            read_at: new Date().toISOString(),
+            pitch: { pitch_number: pitch?.pitch_number, customer_name: pitch?.customer_name },
+          };
+          setReadings(prev => [newR, ...prev]);
+          setToast(`Saved offline — will sync when back online`);
+          setTimeout(() => setToast(''), 4000);
+          resetForm();
           setSaving(false);
           return;
         }
@@ -616,19 +786,30 @@ function ReadingsContent() {
 
     // Create in Supabase
     const u = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
-    const { data, error } = await supabase.from('reading_sessions').insert({
-      name: sessionName,
-      status: 'active',
-      started_by: u.full_name || u.email || 'Unknown',
-    }).select().single();
+    let newSession;
+    try {
+      const { data, error } = await supabase.from('reading_sessions').insert({
+        name: sessionName,
+        status: 'active',
+        started_by: u.full_name || u.email || 'Unknown',
+      }).select().single();
 
-    if (error) {
-      setToast('Error creating session: ' + error.message);
+      if (error) throw error;
+      newSession = { ...data, readings: {} };
+    } catch {
+      // Offline: create local-only session with temp ID
+      newSession = {
+        id: 'offline_ses_' + Date.now(),
+        name: sessionName,
+        status: 'active',
+        started_at: new Date().toISOString(),
+        started_by: u.full_name || u.email || 'Unknown',
+        readings: {},
+        _offline: true,
+      };
+      setToast('Session started offline — will sync when back online');
       setTimeout(() => setToast(''), 4000);
-      return;
     }
-
-    const newSession = { ...data, readings: {} };
     setSession(newSession);
     setSessionPitchIndex(0);
     setNewReading('');
@@ -753,19 +934,26 @@ function ReadingsContent() {
     };
 
     if (supabase) {
-      // Check no existing reading for this pitch in this session
-      const { data: existing } = await supabase
-        .from('meter_readings')
-        .select('id')
-        .eq('session_id', session.id)
-        .eq('pitch_id', pitch.id)
-        .limit(1);
-      if (existing && existing.length > 0) {
-        setToast(`${pitch.pitch_number} already has a reading in this session`);
-        setTimeout(() => setToast(''), 3000);
-        return;
+      try {
+        // Check no existing reading for this pitch in this session
+        const { data: existing } = await supabase
+          .from('meter_readings')
+          .select('id')
+          .eq('session_id', session.id)
+          .eq('pitch_id', pitch.id)
+          .limit(1);
+        if (existing && existing.length > 0) {
+          setToast(`${pitch.pitch_number} already has a reading in this session`);
+          setTimeout(() => setToast(''), 3000);
+          return;
+        }
+        const { error: insertErr } = await supabase.from('meter_readings').insert(payload);
+        if (insertErr) throw insertErr;
+      } catch {
+        addToOfflineQueue({ type: 'dormant', payload, pitch_number: pitch.pitch_number });
+        setToast(`Saved offline — dormant status will sync when back online`);
+        setTimeout(() => setToast(''), 4000);
       }
-      await supabase.from('meter_readings').insert(payload);
     } else {
       const newR = {
         id: String(Date.now()), ...payload,
@@ -827,10 +1015,15 @@ function ReadingsContent() {
 
     // Remove the dormant reading from DB
     if (supabase) {
-      await supabase.from('meter_readings')
-        .delete()
-        .eq('session_id', session.id)
-        .eq('pitch_id', pitch.id);
+      try {
+        await supabase.from('meter_readings')
+          .delete()
+          .eq('session_id', session.id)
+          .eq('pitch_id', pitch.id);
+      } catch {
+        setToast('Offline — dormant status will be updated when back online');
+        setTimeout(() => setToast(''), 3000);
+      }
     }
 
     // Remove from session locally
@@ -866,10 +1059,22 @@ function ReadingsContent() {
     }
 
     // Update session row in Supabase (status, completed_at only — readings are in meter_readings)
-    await supabase.from('reading_sessions').update({
-      status: updatedSession.status,
-      completed_at: updatedSession.completed_at || null,
-    }).eq('id', updatedSession.id);
+    try {
+      await supabase.from('reading_sessions').update({
+        status: updatedSession.status,
+        completed_at: updatedSession.completed_at || null,
+      }).eq('id', updatedSession.id);
+    } catch {
+      addToOfflineQueue({
+        type: 'session_update',
+        session_id: updatedSession.id,
+        status: updatedSession.status,
+        completed_at: updatedSession.completed_at,
+      });
+    }
+
+    // Cache session locally
+    cacheToLocal('sessions', pastSessions.map(s => s.id === updatedSession.id ? updatedSession : s));
 
     setPastSessions(prev => {
       const all = prev.map(s => s.id === updatedSession.id ? updatedSession : s);
@@ -900,12 +1105,21 @@ function ReadingsContent() {
     let prevReading = 0;
 
     if (supabase) {
-      // Get previous reading EXCLUDING current session readings
-      const { data: prev } = await supabase
-        .from('meter_readings').select('reading').eq('pitch_id', pitch.id)
-        .or(`session_id.is.null,session_id.neq.${session.id}`)
-        .order('read_at', { ascending: false }).limit(1);
-      if (prev && prev.length > 0) prevReading = Number(prev[0].reading);
+      try {
+        // Get previous reading EXCLUDING current session readings
+        const { data: prev } = await supabase
+          .from('meter_readings').select('reading').eq('pitch_id', pitch.id)
+          .or(`session_id.is.null,session_id.neq.${session.id}`)
+          .order('read_at', { ascending: false }).limit(1);
+        if (prev && prev.length > 0) prevReading = Number(prev[0].reading);
+      } catch {
+        // Offline: use cached readings for previous reading
+        const cachedReadings = getFromCache('readings');
+        if (cachedReadings?.data) {
+          const prev = cachedReadings.data.filter(r => r.pitch_id === pitch.id);
+          if (prev.length > 0) prevReading = Number(prev[0].reading);
+        }
+      }
     } else {
       const prev = readings.filter(r => r.pitch_id === pitch.id);
       if (prev.length > 0) prevReading = prev[0].reading;
@@ -953,11 +1167,14 @@ function ReadingsContent() {
           return;
         }
 
-        await supabase.from('meter_readings').insert(payload);
+        const { error: insertErr } = await supabase.from('meter_readings').insert(payload);
+        if (insertErr) throw insertErr;
       } catch (err) {
-        setToast('Error: ' + err.message);
-        setSaving(false);
-        return;
+        // Queue for offline sync instead of failing
+        addToOfflineQueue({ type: 'reading', payload, pitch_number: pitch.pitch_number });
+        setToast(`Saved offline — ${pitch.pitch_number} will sync when back online`);
+        setTimeout(() => setToast(''), 4000);
+        // Continue to update session locally (don't return)
       }
     }
 
@@ -1434,7 +1651,38 @@ function ReadingsContent() {
       </header>
 
       {toast && (
-        <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm max-w-sm">{toast}</div>
+        <div className={`fixed top-4 right-4 z-50 text-white px-4 py-2 rounded-lg shadow-lg text-sm max-w-sm ${!isOnline ? 'bg-amber-600' : syncing ? 'bg-blue-600' : 'bg-emerald-600'}`}>{toast}</div>
+      )}
+
+      {/* Offline banner */}
+      {!isOnline && (
+        <div className="bg-amber-500 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 010 12.728M5.636 18.364a9 9 0 010-12.728m2.829 9.9a5 5 0 010-7.072m7.072 7.072a5 5 0 000-7.072" />
+          </svg>
+          Offline Mode — readings saved locally, will sync when reconnected
+          {offlineQueue.length > 0 && (
+            <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs font-bold">{offlineQueue.length} queued</span>
+          )}
+        </div>
+      )}
+
+      {/* Syncing indicator */}
+      {syncing && (
+        <div className="bg-blue-500 text-white px-4 py-1.5 text-center text-xs font-medium flex items-center justify-center gap-2">
+          <div className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+          Syncing offline readings...
+        </div>
+      )}
+
+      {/* Offline queue badge (when online but queue exists) */}
+      {isOnline && !syncing && offlineQueue.length > 0 && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-sm flex items-center justify-center gap-2">
+          <span className="text-amber-700">{offlineQueue.length} reading(s) waiting to sync</span>
+          <button onClick={flushOfflineQueue} className="px-3 py-1 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-500">
+            Sync Now
+          </button>
+        </div>
       )}
 
       {/* Tab bar */}
