@@ -88,6 +88,7 @@ export default function LoginPage() {
         email: data.user.email,
         role: profile?.role || 'customer',
         full_name: profile?.full_name || email,
+        org_id: profile?.org_id || null,
       };
 
       sessionStorage.setItem('pm_user', JSON.stringify(userInfo));

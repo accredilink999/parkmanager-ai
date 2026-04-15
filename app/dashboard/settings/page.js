@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { getOrgId } from '@/lib/org';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -127,8 +128,8 @@ export default function SettingsPage() {
     try {
       for (const s of settings) {
         await supabase.from('site_settings').upsert(
-          { key: s.key, value: s.value || '', updated_at: new Date().toISOString() },
-          { onConflict: 'key' }
+          { key: s.key, value: s.value || '', org_id: getOrgId(), updated_at: new Date().toISOString() },
+          { onConflict: 'key,org_id' }
         );
       }
       setToast('Settings saved');

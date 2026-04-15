@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { getOrgId } from '@/lib/org';
 
 export default function BillsPage() {
   const router = useRouter();
@@ -151,7 +152,7 @@ export default function BillsPage() {
       }, ...prev]);
       setToast(`Bill generated: ${startVal.toLocaleString()} -> ${endVal.toLocaleString()} = ${usage} kWh = £${amount.toFixed(2)}`);
     } else {
-      await supabase.from('bills').insert(billPayload);
+      await supabase.from('bills').insert({ ...billPayload, org_id: getOrgId() });
       setToast(`Bill generated: ${usage} kWh = £${amount.toFixed(2)}`);
       loadData();
     }

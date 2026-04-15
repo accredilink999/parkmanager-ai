@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { getOrgId } from '@/lib/org';
 
 export default function GasPage() {
   return (
@@ -199,7 +200,7 @@ function GasContent() {
 
     if (supabase) {
       const { collar_number, size, type, supplier, status } = cyl;
-      await supabase.from('gas_cylinders').insert({ collar_number, size, type, supplier, status });
+      await supabase.from('gas_cylinders').insert({ collar_number, size, type, supplier, status, org_id: getOrgId() });
       loadData();
     } else {
       saveCylinders([cyl, ...cylinders]);

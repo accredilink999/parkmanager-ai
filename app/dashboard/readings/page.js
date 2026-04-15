@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { getOrgId } from '@/lib/org';
 
 export default function ReadingsPage() {
   return (
@@ -146,7 +147,7 @@ function ReadingsContent() {
             .eq('pitch_id', item.payload.pitch_id)
             .limit(1);
           if (!existing || existing.length === 0) {
-            await supabase.from('meter_readings').insert(item.payload);
+            await supabase.from('meter_readings').insert({ ...item.payload, org_id: getOrgId() });
           }
         } else if (item.type === 'session_update') {
           await supabase.from('reading_sessions').update({
@@ -161,7 +162,7 @@ function ReadingsContent() {
             .eq('pitch_id', item.payload.pitch_id)
             .limit(1);
           if (!existing || existing.length === 0) {
-            await supabase.from('meter_readings').insert(item.payload);
+            await supabase.from('meter_readings').insert({ ...item.payload, org_id: getOrgId() });
           }
         }
       } catch {
@@ -477,7 +478,7 @@ function ReadingsContent() {
         setReadings(prev => [newR, ...prev]);
       } else {
         try {
-          const { error: insertErr } = await supabase.from('meter_readings').insert(payload);
+          const { error: insertErr } = await supabase.from('meter_readings').insert({ ...payload, org_id: getOrgId() });
           if (insertErr) throw insertErr;
           loadData();
         } catch (err) {
@@ -792,6 +793,7 @@ function ReadingsContent() {
         name: sessionName,
         status: 'active',
         started_by: u.full_name || u.email || 'Unknown',
+        org_id: getOrgId(),
       }).select().single();
 
       if (error) throw error;
@@ -833,7 +835,7 @@ function ReadingsContent() {
       const payload = { pitch_id: pitchId, reading: val, previous_reading: 0, usage_kwh: 0 };
 
       if (supabase) {
-        await supabase.from('meter_readings').insert(payload);
+        await supabase.from('meter_readings').insert({ ...payload, org_id: getOrgId() });
       } else {
         const pitch = pitches.find(p => p.id === pitchId);
         const newR = {
@@ -886,6 +888,7 @@ function ReadingsContent() {
           collar_number: collar, size: gasSize, type: gasType,
           status: 'with_customer', pitch_id: pitchId,
           pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
+          org_id: getOrgId(),
         });
       }
     } else {
@@ -947,7 +950,7 @@ function ReadingsContent() {
           setTimeout(() => setToast(''), 3000);
           return;
         }
-        const { error: insertErr } = await supabase.from('meter_readings').insert(payload);
+        const { error: insertErr } = await supabase.from('meter_readings').insert({ ...payload, org_id: getOrgId() });
         if (insertErr) throw insertErr;
       } catch {
         addToOfflineQueue({ type: 'dormant', payload, pitch_number: pitch.pitch_number });
@@ -1167,7 +1170,7 @@ function ReadingsContent() {
           return;
         }
 
-        const { error: insertErr } = await supabase.from('meter_readings').insert(payload);
+        const { error: insertErr } = await supabase.from('meter_readings').insert({ ...payload, org_id: getOrgId() });
         if (insertErr) throw insertErr;
       } catch (err) {
         // Queue for offline sync instead of failing

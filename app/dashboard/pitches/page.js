@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { getOrgId } from '@/lib/org';
 import QRCode from 'qrcode';
 
 export default function PitchesPage() {
@@ -100,7 +101,7 @@ export default function PitchesPage() {
         await supabase.from('pitches').update(payload).eq('id', editing.id);
         setToast('Pitch updated');
       } else {
-        await supabase.from('pitches').insert(payload);
+        await supabase.from('pitches').insert({ ...payload, org_id: getOrgId() });
         setToast('Pitch added');
       }
       setTimeout(() => setToast(''), 3000);
