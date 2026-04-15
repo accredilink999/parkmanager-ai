@@ -65,6 +65,13 @@ function ReadingsContent() {
   // Email sending state
   const [sendingEmail, setSendingEmail] = useState(null); // 'manager' | 'head_office' | null
 
+  // Gas cylinder entry during session
+  const [showGasEntry, setShowGasEntry] = useState(null); // pitchId or null
+  const [sessionGasCylinders, setSessionGasCylinders] = useState({}); // { pitchId: [{ collar_number, size, type }] }
+  const [gasCollarInput, setGasCollarInput] = useState('');
+  const [gasSize, setGasSize] = useState('13kg');
+  const [gasType, setGasType] = useState('Propane');
+
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
@@ -518,6 +525,72 @@ function ReadingsContent() {
     loadData();
     setToast(`Baseline readings saved for ${entries.length} pitches`);
     setTimeout(() => setToast(''), 3000);
+  }
+
+  // ---- Gas cylinder entry during session ----
+  async function addSessionGasCylinder(pitchId) {
+    if (!gasCollarInput || gasCollarInput.length < 4) return;
+    const pitch = pitches.find(p => p.id === pitchId);
+    const collar = gasCollarInput;
+
+    const cyl = {
+      collar_number: collar,
+      size: gasSize,
+      type: gasType,
+      status: 'with_customer',
+      pitch_id: pitchId,
+      pitch_number: pitch?.pitch_number || null,
+      customer_name: pitch?.customer_name || null,
+    };
+
+    // Save to Supabase or localStorage
+    if (supabase) {
+      // Check if collar already exists
+      const { data: existing } = await supabase.from('gas_cylinders').select('id').eq('collar_number', collar).limit(1);
+      if (existing && existing.length > 0) {
+        // Update existing cylinder
+        await supabase.from('gas_cylinders').update({
+          status: 'with_customer', pitch_id: pitchId,
+          pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
+          size: gasSize, type: gasType, updated_at: new Date().toISOString(),
+        }).eq('id', existing[0].id);
+      } else {
+        await supabase.from('gas_cylinders').insert({
+          collar_number: collar, size: gasSize, type: gasType,
+          status: 'with_customer', pitch_id: pitchId,
+          pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
+        });
+      }
+    } else {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pm_gas_cylinders') || '[]');
+        const idx = saved.findIndex(c => c.collar_number === collar);
+        if (idx >= 0) {
+          saved[idx] = { ...saved[idx], ...cyl, updated_at: new Date().toISOString() };
+        } else {
+          saved.unshift({ id: 'cyl_' + Date.now(), ...cyl, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+        }
+        localStorage.setItem('pm_gas_cylinders', JSON.stringify(saved));
+      } catch {}
+    }
+
+    // Track in session state
+    setSessionGasCylinders(prev => ({
+      ...prev,
+      [pitchId]: [...(prev[pitchId] || []), { collar_number: collar, size: gasSize, type: gasType }],
+    }));
+
+    setGasCollarInput('');
+    setToast(`Cylinder ${collar} added — ${pitch?.pitch_number || 'pitch'}`);
+    setTimeout(() => setToast(''), 3000);
+  }
+
+  function removeSessionGasCylinder(pitchId, index) {
+    setSessionGasCylinders(prev => {
+      const updated = [...(prev[pitchId] || [])];
+      updated.splice(index, 1);
+      return { ...prev, [pitchId]: updated };
+    });
   }
 
   function resumeSession(sess) {
@@ -1602,6 +1675,58 @@ function ReadingsContent() {
                         </button>
                       </div>
                     )}
+
+                    {/* Gas Cylinder Entry */}
+                    <div className="mt-3 border-t border-slate-100 pt-3">
+                      <button onClick={() => setShowGasEntry(prev => prev === currentSessionPitch.id ? null : currentSessionPitch.id)}
+                        className="text-xs text-orange-600 hover:text-orange-800 font-medium flex items-center gap-1">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                        </svg>
+                        {showGasEntry === currentSessionPitch.id ? 'Hide' : 'Add'} Gas Cylinders for this Pitch
+                      </button>
+                      {showGasEntry === currentSessionPitch.id && (
+                        <div className="mt-2 bg-orange-50 border border-orange-200 rounded-lg p-3">
+                          <p className="text-xs text-orange-700 mb-2">Enter collar numbers for cylinders at this pitch (max 2)</p>
+                          {/* Show existing cylinders for this pitch */}
+                          {(() => {
+                            const pitchCyls = (sessionGasCylinders[currentSessionPitch.id] || []);
+                            return pitchCyls.length > 0 && (
+                              <div className="mb-2 space-y-1">
+                                {pitchCyls.map((gc, i) => (
+                                  <div key={i} className="flex items-center justify-between bg-white rounded px-2 py-1 border border-orange-100">
+                                    <span className="text-sm font-mono font-medium text-slate-800">{gc.collar_number}</span>
+                                    <span className="text-xs text-slate-400">{gc.size} {gc.type}</span>
+                                    <button onClick={() => removeSessionGasCylinder(currentSessionPitch.id, i)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                          {(sessionGasCylinders[currentSessionPitch.id] || []).length < 2 && (
+                            <div className="flex items-end gap-2">
+                              <div className="flex-1">
+                                <input type="text" inputMode="numeric" maxLength={4} value={gasCollarInput}
+                                  onChange={e => setGasCollarInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                                  className="w-full px-2 py-1.5 border border-orange-200 rounded-lg text-sm font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                  placeholder="Collar no." />
+                              </div>
+                              <select value={gasSize} onChange={e => setGasSize(e.target.value)} className="px-2 py-1.5 border border-orange-200 rounded-lg text-xs">
+                                <option>13kg</option><option>6kg</option><option>19kg</option><option>47kg</option>
+                              </select>
+                              <select value={gasType} onChange={e => setGasType(e.target.value)} className="px-2 py-1.5 border border-orange-200 rounded-lg text-xs">
+                                <option>Propane</option><option>Butane</option><option>Patio Gas</option>
+                              </select>
+                              <button onClick={() => addSessionGasCylinder(currentSessionPitch.id)}
+                                disabled={!gasCollarInput || gasCollarInput.length < 4}
+                                className="px-3 py-1.5 bg-orange-600 text-white rounded-lg text-xs font-medium disabled:opacity-50 hover:bg-orange-500">
+                                Add
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Navigation */}
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
