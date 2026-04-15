@@ -237,6 +237,10 @@ function ReadingReportsContent() {
 
     // Footer
     const pageHeight = doc.internal.pageSize.height;
+    const ru = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    doc.setFontSize(8);
+    doc.setTextColor(80);
+    doc.text(`Carried out by: ${ru.full_name || ru.email || ''}`, 14, pageHeight - 16);
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(`${siteName} — ParkManagerAI — ${new Date().toLocaleString('en-GB')}`, 14, pageHeight - 10);
@@ -285,6 +289,12 @@ function ReadingReportsContent() {
       doc.text(val, 60, y);
       y += 8;
     });
+
+    y += 6;
+    const iru = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    doc.setFontSize(8);
+    doc.setTextColor(80);
+    doc.text(`Carried out by: ${iru.full_name || iru.email || ''}`, 14, y);
 
     doc.save(`Reading-${p?.pitch_number || 'unknown'}-${new Date(reading.read_at).toLocaleDateString('en-GB').replace(/\//g, '-')}.pdf`);
   }
