@@ -783,41 +783,53 @@ function ReadingsContent() {
 
   // ---- Gas cylinder entry during session ----
   async function addSessionGasCylinder(pitchId) {
-    if (!gasCollarInput || gasCollarInput.length < 4) return;
+    if (!gasCollarInput || gasCollarInput.trim().length < 1) return;
     const pitch = pitches.find(p => p.id === pitchId);
-    const collar = gasCollarInput;
-
-    const cyl = {
-      collar_number: collar,
-      size: gasSize,
-      type: gasType,
-      status: 'with_customer',
-      pitch_id: pitchId,
-      pitch_number: pitch?.pitch_number || null,
-      customer_name: pitch?.customer_name || null,
-    };
+    const collar = gasCollarInput.trim();
 
     // Save to Supabase or localStorage
     if (supabase) {
-      // Check if collar already exists
-      const { data: existing } = await supabase.from('gas_cylinders').select('id').eq('collar_number', collar).limit(1);
-      if (existing && existing.length > 0) {
-        // Update existing cylinder
-        await supabase.from('gas_cylinders').update({
-          status: 'with_customer', pitch_id: pitchId,
-          pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
-          size: gasSize, type: gasType, updated_at: new Date().toISOString(),
-        }).eq('id', existing[0].id);
-      } else {
-        await supabase.from('gas_cylinders').insert({
-          collar_number: collar, size: gasSize, type: gasType,
-          status: 'with_customer', pitch_id: pitchId,
-          pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
-          org_id: getOrgId(),
-        });
+      try {
+        // Check if collar already exists
+        const { data: existing } = await supabase.from('gas_cylinders').select('id').eq('collar_number', collar).limit(1);
+        let cylinderId;
+        if (existing && existing.length > 0) {
+          cylinderId = existing[0].id;
+          await supabase.from('gas_cylinders').update({
+            status: 'with_customer', pitch_id: pitchId,
+            pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
+            size: gasSize, type: gasType, updated_at: new Date().toISOString(),
+          }).eq('id', cylinderId);
+        } else {
+          const { data: inserted } = await supabase.from('gas_cylinders').insert({
+            collar_number: collar, size: gasSize, type: gasType,
+            status: 'with_customer', pitch_id: pitchId,
+            pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null,
+            org_id: getOrgId(),
+          }).select('id').single();
+          cylinderId = inserted?.id;
+        }
+        // Log to gas_logs
+        if (cylinderId) {
+          await supabase.from('gas_logs').insert({
+            cylinder_id: cylinderId, collar_number: collar,
+            action: 'given_to_customer',
+            pitch_id: pitchId,
+            pitch_number: pitch?.pitch_number || null,
+            customer_name: pitch?.customer_name || null,
+            notes: `${gasSize} ${gasType} — added during meter reading session`,
+            org_id: getOrgId(),
+          });
+        }
+      } catch (err) {
+        console.error('Gas cylinder save error:', err);
+        setToast('Failed to save cylinder — try again');
+        setTimeout(() => setToast(''), 3000);
+        return;
       }
     } else {
       try {
+        const cyl = { collar_number: collar, size: gasSize, type: gasType, status: 'with_customer', pitch_id: pitchId, pitch_number: pitch?.pitch_number || null, customer_name: pitch?.customer_name || null };
         const saved = JSON.parse(localStorage.getItem('pm_gas_cylinders') || '[]');
         const idx = saved.findIndex(c => c.collar_number === collar);
         if (idx >= 0) {
@@ -2290,8 +2302,8 @@ function ReadingsContent() {
                           {(sessionGasCylinders[currentSessionPitch.id] || []).length < 2 && (
                             <div className="flex items-end gap-2">
                               <div className="flex-1">
-                                <input type="text" inputMode="numeric" maxLength={4} value={gasCollarInput}
-                                  onChange={e => setGasCollarInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                                <input type="text" value={gasCollarInput}
+                                  onChange={e => setGasCollarInput(e.target.value)}
                                   className="w-full px-2 py-1.5 border border-orange-200 rounded-lg text-sm font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-500"
                                   placeholder="Collar no." />
                               </div>
@@ -2302,7 +2314,7 @@ function ReadingsContent() {
                                 <option>Propane</option><option>Butane</option><option>Patio Gas</option>
                               </select>
                               <button onClick={() => addSessionGasCylinder(currentSessionPitch.id)}
-                                disabled={!gasCollarInput || gasCollarInput.length < 4}
+                                disabled={!gasCollarInput || !gasCollarInput.trim()}
                                 className="px-3 py-1.5 bg-orange-600 text-white rounded-lg text-xs font-medium disabled:opacity-50 hover:bg-orange-500">
                                 Add
                               </button>
