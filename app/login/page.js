@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -15,39 +15,29 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [showQr, setShowQr] = useState(false);
-  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [qrReady, setQrReady] = useState(false);
   const [copied, setCopied] = useState(false);
+  const qrCanvasRef = useRef(null);
 
-  // Generate QR code for login URL
+  // Render QR code directly to canvas element
   useEffect(() => {
-    if (!showQr || qrDataUrl) return;
-    (async () => {
-      try {
-        const mod = await import('qrcode');
-        const QRCode = mod.default || mod;
-        const loginUrl = window.location.origin + '/login';
-        const dataUrl = await QRCode.toDataURL(loginUrl, {
-          width: 280,
-          margin: 2,
-          color: { dark: '#0f172a', light: '#ffffff' },
-          errorCorrectionLevel: 'M',
-        });
-        setQrDataUrl(dataUrl);
-      } catch (err) {
-        console.error('QR generation failed:', err);
-        // Fallback: use a canvas-based simple approach
-        try {
-          const mod2 = await import('qrcode');
-          const canvas = document.createElement('canvas');
-          const loginUrl = window.location.origin + '/login';
-          await (mod2.default || mod2).toCanvas(canvas, loginUrl, { width: 280, margin: 2 });
-          setQrDataUrl(canvas.toDataURL());
-        } catch (err2) {
-          console.error('QR canvas fallback also failed:', err2);
-        }
-      }
-    })();
-  }, [showQr, qrDataUrl]);
+    if (!showQr || !qrCanvasRef.current) return;
+    setQrReady(false);
+    const loginUrl = window.location.origin + '/login';
+
+    import('qrcode').then(mod => {
+      const QRCode = mod.default || mod;
+      QRCode.toCanvas(qrCanvasRef.current, loginUrl, {
+        width: 240,
+        margin: 2,
+        color: { dark: '#0f172a', light: '#ffffff' },
+        errorCorrectionLevel: 'M',
+      }, (err) => {
+        if (err) console.error('QR render error:', err);
+        else setQrReady(true);
+      });
+    }).catch(err => console.error('QR import error:', err));
+  }, [showQr]);
 
   function copyLoginLink() {
     const url = typeof window !== 'undefined' ? window.location.href : 'https://parkmanager-ai.vercel.app/login';
@@ -332,13 +322,14 @@ export default function LoginPage() {
             <div className="mt-4 bg-white rounded-2xl shadow-2xl p-6 inline-block">
               <p className="text-sm font-semibold text-slate-800 mb-1">Scan to open login page</p>
               <p className="text-xs text-slate-400 mb-4">Share this with staff or customers to access the app</p>
-              {qrDataUrl ? (
-                <img src={qrDataUrl} alt="Login QR Code" className="mx-auto w-56 h-56 rounded-xl" />
-              ) : (
-                <div className="w-56 h-56 mx-auto flex items-center justify-center bg-slate-50 rounded-xl">
-                  <div className="animate-spin w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full" />
-                </div>
-              )}
+              <div className="mx-auto flex items-center justify-center">
+                <canvas ref={qrCanvasRef} className={`rounded-xl ${qrReady ? '' : 'hidden'}`} />
+                {!qrReady && (
+                  <div className="w-56 h-56 flex items-center justify-center bg-slate-50 rounded-xl">
+                    <div className="animate-spin w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full" />
+                  </div>
+                )}
+              </div>
               <div className="flex items-center gap-2 mt-4 justify-center">
                 <button
                   onClick={copyLoginLink}
