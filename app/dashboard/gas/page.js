@@ -47,6 +47,9 @@ function GasContent() {
   const [returnSessions, setReturnSessions] = useState([]);
   const [activeReturn, setActiveReturn] = useState(null);
 
+  // Edit cylinder
+  const [editingCylinder, setEditingCylinder] = useState(null);
+
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -306,6 +309,7 @@ function GasContent() {
   }
 
   async function deleteCylinder(cyl) {
+    if (!confirm(`Delete cylinder ${cyl.collar_number || cyl.barcode}?`)) return;
     if (supabase) {
       await supabase.from('gas_cylinders').delete().eq('id', cyl.id);
       loadData();
@@ -313,6 +317,23 @@ function GasContent() {
       saveCylinders(cylinders.filter(c => c.id !== cyl.id));
     }
     flash(`Cylinder ${cyl.collar_number} removed from inventory`);
+  }
+
+  function startEditCylinder(cyl) {
+    setEditingCylinder({ ...cyl });
+  }
+
+  async function saveEditCylinder() {
+    if (!editingCylinder) return;
+    const { id, collar_number, size, type, supplier } = editingCylinder;
+    if (supabase) {
+      await supabase.from('gas_cylinders').update({ collar_number, size, type, supplier, updated_at: new Date().toISOString() }).eq('id', id);
+      loadData();
+    } else {
+      saveCylinders(cylinders.map(c => c.id === id ? { ...c, collar_number, size, type, supplier, updated_at: new Date().toISOString() } : c));
+    }
+    setEditingCylinder(null);
+    flash(`Cylinder ${collar_number} updated`);
   }
 
   // ---- Delivery Sessions ----
@@ -382,87 +403,172 @@ function GasContent() {
     const { default: jsPDF } = await import('jspdf');
     const doc = new jsPDF();
 
-    let siteName = 'Park Manager AI';
-    try {
-      const saved = localStorage.getItem('pm_settings');
-      if (saved) JSON.parse(saved).forEach(s => { if (s.key === 'site_name') siteName = s.value; });
-    } catch {}
+    let siteName = 'Park Manager AI', siteAddress = '';
+    if (supabase) {
+      try {
+        const { data } = await supabase.from('site_settings').select('*');
+        (data || []).forEach(s => {
+          if (s.key === 'site_name') siteName = s.value;
+          if (s.key === 'site_address') siteAddress = s.value;
+        });
+      } catch {}
+    } else {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pm_settings') || '[]');
+        saved.forEach(s => {
+          if (s.key === 'site_name') siteName = s.value;
+          if (s.key === 'site_address') siteAddress = s.value;
+        });
+      } catch {}
+    }
 
     const onSite = cylinders.filter(c => c.status !== 'offsite');
     const withCustomer = cylinders.filter(c => c.status === 'with_customer');
     const onSiteStore = cylinders.filter(c => c.status === 'on_site');
     const offsite = cylinders.filter(c => c.status === 'offsite');
+    const isFireReport = recipient === 'fire_report';
+    const now = new Date();
 
     // Header
     doc.setFontSize(18);
-    doc.setTextColor(234, 88, 12); // orange
+    doc.setTextColor(isFireReport ? 220 : 234, isFireReport ? 38 : 88, isFireReport ? 38 : 12);
     doc.text(siteName, 14, 20);
-    doc.setFontSize(12);
+    if (siteAddress) { doc.setFontSize(9); doc.setTextColor(100); doc.text(siteAddress, 14, 26); }
+    doc.setFontSize(14);
     doc.setTextColor(0);
-    doc.text('Gas Cylinder Inventory Report', 14, 28);
+    doc.text(isFireReport ? 'LPG Cylinder Fire Safety Register' : 'Gas Cylinder Inventory Report', 14, siteAddress ? 34 : 28);
     doc.setFontSize(9);
     doc.setTextColor(100);
-    doc.text(`Generated: ${new Date().toLocaleString('en-GB')}`, 14, 35);
-    if (recipient === 'head_office') doc.text('Report for: Head Office', 14, 40);
-    if (recipient === 'manager') doc.text('Report for: Site Manager', 14, 40);
+    const topY = siteAddress ? 40 : 35;
+    doc.text(`Date: ${now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`, 14, topY);
+    doc.text(`Time: ${now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`, 100, topY);
+    if (recipient === 'head_office') doc.text('Report for: Head Office', 14, topY + 5);
+    if (recipient === 'manager') doc.text('Report for: Site Manager', 14, topY + 5);
+
+    // Fire compliance notice
+    let y = topY + (isFireReport ? 10 : 12);
+    if (isFireReport) {
+      doc.setFillColor(254, 242, 242);
+      doc.setDrawColor(252, 165, 165);
+      doc.roundedRect(14, y - 4, 182, 16, 2, 2, 'FD');
+      doc.setFontSize(8);
+      doc.setTextColor(153, 27, 27);
+      doc.text('IMPORTANT: This register must be available at all times for inspection by the Fire Service.', 18, y + 1);
+      doc.text('LPG cylinders must be stored in accordance with HSE INDG308 and local fire authority requirements.', 18, y + 7);
+      y += 18;
+    }
 
     // Summary
-    let y = 50;
     doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
     doc.setTextColor(0);
     doc.text('Summary', 14, y);
-    y += 6;
+    y += 7;
     doc.setFontSize(9);
-    doc.text(`Total Cylinders on Site: ${onSite.length}`, 14, y);
-    doc.text(`In Store: ${onSiteStore.length}`, 100, y);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Total Cylinders on Premises: ${onSite.length}`, 14, y);
+    doc.text(`In Store (unallocated): ${onSiteStore.length}`, 110, y);
     y += 5;
-    doc.text(`With Customers: ${withCustomer.length}`, 14, y);
-    doc.text(`Offsite/Returned: ${offsite.length}`, 100, y);
+    doc.text(`With Customers (on pitches): ${withCustomer.length}`, 14, y);
+    doc.text(`Offsite / Returned: ${offsite.length}`, 110, y);
 
-    // On-site register (fire regs)
+    // === IN STORE section ===
     y += 12;
-    doc.setFontSize(11);
-    doc.setTextColor(220, 38, 38);
-    doc.text('ON-SITE REGISTER (Fire Regulations)', 14, y);
-    y += 3;
-    doc.setFontSize(7);
-    doc.setTextColor(100);
-    doc.text('All live gas cylinders currently on premises', 14, y);
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(22, 163, 74);
+    doc.text(`IN STORE — ${onSiteStore.length} cylinder${onSiteStore.length !== 1 ? 's' : ''}`, 14, y);
 
     y += 6;
-    doc.setFillColor(254, 242, 242);
+    doc.setFillColor(240, 253, 244);
     doc.rect(14, y - 4, 182, 8, 'F');
     doc.setFontSize(8);
     doc.setTextColor(100);
     doc.text('Collar No.', 16, y);
-    doc.text('Size', 55, y);
+    doc.text('Size', 50, y);
     doc.text('Type', 75, y);
-    doc.text('Status', 100, y);
-    doc.text('Pitch', 130, y);
-    doc.text('Customer', 150, y);
+    doc.text('Supplier', 105, y);
+    doc.text('Added', 150, y);
 
     y += 6;
     doc.setTextColor(0);
-    for (const c of onSite) {
+    doc.setFont(undefined, 'normal');
+    for (const c of onSiteStore) {
       if (y > 275) { doc.addPage(); y = 20; }
       doc.setFontSize(8);
       doc.text(c.collar_number || c.barcode || '', 16, y);
-      doc.text(c.size || '', 55, y);
+      doc.text(c.size || '', 50, y);
       doc.text(c.type || '', 75, y);
-      doc.text(c.status === 'with_customer' ? 'With Customer' : 'In Store', 100, y);
-      doc.text(c.pitch_number || '—', 130, y);
-      doc.text((c.customer_name || '—').substring(0, 18), 150, y);
+      doc.text((c.supplier || '—').substring(0, 20), 105, y);
+      doc.text(c.created_at ? new Date(c.created_at).toLocaleDateString('en-GB') : '—', 150, y);
       y += 5;
+    }
+    if (onSiteStore.length === 0) { doc.setFontSize(8); doc.setTextColor(150); doc.text('No cylinders in store', 16, y); y += 5; }
+
+    // === WITH CUSTOMERS section ===
+    y += 8;
+    if (y > 260) { doc.addPage(); y = 20; }
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(37, 99, 235);
+    doc.text(`WITH CUSTOMERS — ${withCustomer.length} cylinder${withCustomer.length !== 1 ? 's' : ''}`, 14, y);
+
+    y += 6;
+    doc.setFillColor(239, 246, 255);
+    doc.rect(14, y - 4, 182, 8, 'F');
+    doc.setFontSize(8);
+    doc.setTextColor(100);
+    doc.text('Collar No.', 16, y);
+    doc.text('Size', 50, y);
+    doc.text('Type', 75, y);
+    doc.text('Pitch', 105, y);
+    doc.text('Customer', 125, y);
+    doc.text('Assigned', 170, y);
+
+    y += 6;
+    doc.setTextColor(0);
+    doc.setFont(undefined, 'normal');
+    for (const c of withCustomer) {
+      if (y > 275) { doc.addPage(); y = 20; }
+      doc.setFontSize(8);
+      doc.text(c.collar_number || c.barcode || '', 16, y);
+      doc.text(c.size || '', 50, y);
+      doc.text(c.type || '', 75, y);
+      doc.text(c.pitch_number || '—', 105, y);
+      doc.text((c.customer_name || '—').substring(0, 20), 125, y);
+      doc.text(c.updated_at ? new Date(c.updated_at).toLocaleDateString('en-GB') : '—', 170, y);
+      y += 5;
+    }
+    if (withCustomer.length === 0) { doc.setFontSize(8); doc.setTextColor(150); doc.text('No cylinders with customers', 16, y); y += 5; }
+
+    // Sign-off box for fire report
+    if (isFireReport) {
+      y += 10;
+      if (y > 240) { doc.addPage(); y = 20; }
+      doc.setDrawColor(200);
+      doc.setLineWidth(0.5);
+      doc.roundedRect(14, y, 182, 36, 2, 2, 'S');
+      doc.setFontSize(9);
+      doc.setTextColor(0);
+      doc.setFont(undefined, 'bold');
+      doc.text('Inspection Sign-Off', 18, y + 7);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8);
+      doc.text('Checked by: ___________________________________', 18, y + 16);
+      doc.text('Signature: ___________________________________', 18, y + 23);
+      doc.text(`Date: ${now.toLocaleDateString('en-GB')}`, 18, y + 30);
+      doc.text('Position: ___________________________________', 110, y + 23);
     }
 
     // Footer
-    y += 8;
-    if (y > 270) { doc.addPage(); y = 20; }
+    y += isFireReport ? 44 : 12;
+    if (y > 280) { doc.addPage(); y = 20; }
     doc.setFontSize(7);
     doc.setTextColor(150);
-    doc.text(`Generated by ${siteName} on ${new Date().toLocaleString('en-GB')}`, 14, y);
+    doc.text(`Generated by ${siteName} — ParkManagerAI — ${now.toLocaleString('en-GB')}`, 105, 285, { align: 'center' });
 
-    const filename = `GasInventory-${new Date().toISOString().slice(0, 10)}-${recipient}.pdf`;
+    const typeLabel = isFireReport ? 'FireRegister' : `GasInventory-${recipient}`;
+    const filename = `${typeLabel}-${now.toISOString().slice(0, 10)}.pdf`;
     doc.save(filename);
     flash(`PDF exported: ${filename}`);
   }
@@ -619,6 +725,48 @@ function GasContent() {
         </div>
       )}
 
+      {/* Edit Cylinder Modal */}
+      {editingCylinder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="text-base font-bold text-slate-900 mb-4">Edit Cylinder</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Collar Number</label>
+                <input value={editingCylinder.collar_number || ''} onChange={e => setEditingCylinder(p => ({ ...p, collar_number: e.target.value.replace(/[^0-9]/g, '').slice(0, 4) }))}
+                  inputMode="numeric" maxLength={4}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-lg font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Size</label>
+                  <select value={editingCylinder.size} onChange={e => setEditingCylinder(p => ({ ...p, size: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+                    <option>6kg</option><option>13kg</option><option>19kg</option><option>47kg</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Type</label>
+                  <select value={editingCylinder.type} onChange={e => setEditingCylinder(p => ({ ...p, type: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+                    <option>Propane</option><option>Butane</option><option>Patio Gas</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Supplier</label>
+                <input value={editingCylinder.supplier || ''} onChange={e => setEditingCylinder(p => ({ ...p, supplier: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="e.g. Calor, Flogas" />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setEditingCylinder(null)} className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm">Cancel</button>
+              <button onClick={saveEditCylinder} className="flex-1 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-500">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab Bar */}
       <div className="max-w-7xl mx-auto px-4 pt-4">
         <div className="flex items-center gap-1 bg-white rounded-xl border p-1 mb-4 overflow-x-auto">
@@ -740,6 +888,8 @@ function GasContent() {
                                 <button onClick={() => handleReturnCylinder(c)}
                                   className="text-xs text-green-600 hover:text-green-800 font-medium px-1">Return</button>
                               )}
+                              <button onClick={() => startEditCylinder(c)}
+                                className="text-xs text-teal-600 hover:text-teal-800 font-medium px-1">Edit</button>
                               <button onClick={() => deleteCylinder(c)}
                                 className="text-xs text-red-400 hover:text-red-600 px-1">
                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -983,12 +1133,16 @@ function GasContent() {
             </div>
 
             {/* Export */}
-            <div className="flex gap-2 mb-4">
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button onClick={() => exportInventoryPdf('fire_report')} className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-500 flex items-center gap-1.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Fire Safety Register (PDF)
+              </button>
               <button onClick={() => exportInventoryPdf('manager')} className="px-3 py-2 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200">
-                Download Register (PDF)
+                Manager Report
               </button>
               <button onClick={() => exportInventoryPdf('head_office')} className="px-3 py-2 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200">
-                Send to Head Office (PDF)
+                Head Office Report
               </button>
             </div>
 

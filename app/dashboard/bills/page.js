@@ -267,7 +267,7 @@ export default function BillsPage() {
 
   if (!user) return null;
 
-  const canMarkPaid = ['super_admin', 'admin', 'accounts'].includes(user.role);
+  const canMarkPaid = ['super_admin', 'admin', 'accounts', 'developer'].includes(user.role);
 
   // Stats
   const totalBilled = bills.reduce((s, b) => s + Number(b.amount_gbp || 0), 0);

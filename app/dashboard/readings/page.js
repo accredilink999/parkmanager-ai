@@ -229,6 +229,18 @@ function ReadingsContent() {
     setShowForm(true);
   }
 
+  async function deleteReading(reading) {
+    if (!confirm(`Delete reading ${Number(reading.reading).toLocaleString()} for ${reading.pitch?.pitch_number || 'this pitch'}?`)) return;
+    if (!supabase) {
+      setReadings(prev => prev.filter(r => r.id !== reading.id));
+    } else {
+      await supabase.from('meter_readings').delete().eq('id', reading.id);
+      loadData();
+    }
+    setToast('Reading deleted');
+    setTimeout(() => setToast(''), 3000);
+  }
+
   // ---- QR Scanner ----
   async function startScanner() {
     setShowScanner(true);
@@ -1285,7 +1297,8 @@ function ReadingsContent() {
                         <td className="px-4 py-3 text-sm text-right font-bold text-blue-600">&pound;{(Number(r.usage_kwh || 0) * unitRate).toFixed(2)}</td>
                         <td className="px-4 py-3 text-xs text-right text-slate-400 hidden sm:table-cell">{r.read_at ? new Date(r.read_at).toLocaleDateString() : '—'}</td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={() => startEdit(r)} className="text-xs text-teal-600 hover:text-teal-800 font-medium">Edit</button>
+                          <button onClick={() => startEdit(r)} className="text-xs text-teal-600 hover:text-teal-800 font-medium mr-2">Edit</button>
+                          <button onClick={() => deleteReading(r)} className="text-xs text-red-400 hover:text-red-600 font-medium">Delete</button>
                         </td>
                       </tr>
                     ))}

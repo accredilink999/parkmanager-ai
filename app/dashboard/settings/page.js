@@ -27,7 +27,7 @@ export default function SettingsPage() {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     const u = JSON.parse(saved);
-    if (u.role !== 'super_admin') { router.push('/dashboard'); return; }
+    if (!['super_admin', 'developer'].includes(u.role)) { router.push('/dashboard'); return; }
     setUser(u);
     loadSettings();
   }, [router]);
