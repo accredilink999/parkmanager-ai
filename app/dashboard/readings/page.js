@@ -59,6 +59,9 @@ function ReadingsContent() {
   const [baselineReadings, setBaselineReadings] = useState({}); // { pitchId: readingValue }
   const [savingBaseline, setSavingBaseline] = useState(false);
 
+  // Unit rate (£/kWh) from site settings
+  const [unitRate, setUnitRate] = useState(0.34);
+
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
@@ -85,6 +88,10 @@ function ReadingsContent() {
   async function loadData() {
     setLoading(true);
     if (!supabase) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pm_settings') || '[]');
+        saved.forEach(s => { if (s.key === 'electricity_unit_rate') setUnitRate(parseFloat(s.value) || 0.34); });
+      } catch {}
       setPitches([
         { id: '1', pitch_number: 'A1', customer_name: 'John Smith', meter_id: 'M001' },
         { id: '2', pitch_number: 'A2', customer_name: 'Jane Doe', meter_id: 'M002' },
@@ -99,12 +106,16 @@ function ReadingsContent() {
       setLoading(false);
       return;
     }
-    const [pitchRes, readingRes] = await Promise.all([
+    const [pitchRes, readingRes, settingsRes] = await Promise.all([
       supabase.from('pitches').select('*').order('pitch_number'),
       supabase.from('meter_readings').select('*, pitches(pitch_number, customer_name)').order('read_at', { ascending: false }).limit(50),
+      supabase.from('site_settings').select('*'),
     ]);
     setPitches(pitchRes.data || []);
     setReadings((readingRes.data || []).map(r => ({ ...r, pitch: r.pitches })));
+    (settingsRes.data || []).forEach(s => {
+      if (s.key === 'electricity_unit_rate') setUnitRate(parseFloat(s.value) || 0.34);
+    });
     setLoading(false);
   }
 
@@ -583,7 +594,8 @@ function ReadingsContent() {
 
     updateSession(updatedSession);
 
-    setToast(`${pitch.pitch_number}: ${readingVal} saved (${usage} kWh)`);
+    const cost = (usage * unitRate).toFixed(2);
+    setToast(`${pitch.pitch_number}: ${readingVal} saved (${usage} kWh = £${cost})`);
     setTimeout(() => setToast(''), 3000);
 
     // Auto advance to next unread pitch
@@ -1131,6 +1143,7 @@ function ReadingsContent() {
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Reading</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Previous</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Usage (kWh)</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Cost</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 hidden sm:table-cell">Date</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Actions</th>
                     </tr>
@@ -1143,6 +1156,7 @@ function ReadingsContent() {
                         <td className="px-4 py-3 text-sm text-right font-mono">{Number(r.reading).toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-right font-mono text-slate-400">{Number(r.previous_reading).toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-right font-bold text-emerald-600">{Number(r.usage_kwh).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right font-bold text-blue-600">&pound;{(Number(r.usage_kwh || 0) * unitRate).toFixed(2)}</td>
                         <td className="px-4 py-3 text-xs text-right text-slate-400 hidden sm:table-cell">{r.read_at ? new Date(r.read_at).toLocaleDateString() : '—'}</td>
                         <td className="px-4 py-3 text-right">
                           <button onClick={() => startEdit(r)} className="text-xs text-teal-600 hover:text-teal-800 font-medium">Edit</button>
@@ -1308,6 +1322,11 @@ function ReadingsContent() {
                     <div>
                       <h3 className="text-sm font-bold text-slate-900">{session.name}</h3>
                       <p className="text-xs text-slate-400">{sessionCompleted} of {sessionTotal} meters read</p>
+                      {sessionCompleted > 0 && (() => {
+                        const totalUsage = Object.values(session.readings).reduce((sum, r) => sum + (r.usage_kwh || 0), 0);
+                        const totalCost = (totalUsage * unitRate).toFixed(2);
+                        return <p className="text-xs font-medium text-blue-600 mt-0.5">{totalUsage.toLocaleString()} kWh &middot; &pound;{totalCost}</p>;
+                      })()}
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => { setExportSession(session); setShowExportModal(true); }} className="px-3 py-1.5 bg-teal-100 text-teal-700 rounded-lg text-xs font-medium hover:bg-teal-200">
@@ -1377,9 +1396,11 @@ function ReadingsContent() {
                         <p className="text-sm text-emerald-800 font-medium">
                           Reading: <span className="font-mono">{session.readings[currentSessionPitch.id].reading}</span>
                           <span className="text-emerald-600 ml-2">({session.readings[currentSessionPitch.id].usage_kwh} kWh)</span>
+                          <span className="text-blue-600 ml-2 font-bold">&pound;{((session.readings[currentSessionPitch.id].usage_kwh || 0) * unitRate).toFixed(2)}</span>
                         </p>
                         <p className="text-xs text-emerald-600">
                           Recorded at {new Date(session.readings[currentSessionPitch.id].read_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                          <span className="text-slate-400 ml-2">@ &pound;{unitRate.toFixed(2)}/kWh</span>
                         </p>
                       </div>
                     )}
@@ -1495,6 +1516,7 @@ function ReadingsContent() {
                             <div className="text-right">
                               <span className="text-sm font-mono text-slate-700">{r.reading}</span>
                               <span className="text-xs text-emerald-600 ml-2">{r.usage_kwh} kWh</span>
+                              <span className="text-xs text-blue-600 font-bold ml-1">&pound;{((r.usage_kwh || 0) * unitRate).toFixed(2)}</span>
                             </div>
                           </div>
                         );
