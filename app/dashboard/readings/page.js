@@ -72,6 +72,28 @@ function ReadingsContent() {
   const [gasSize, setGasSize] = useState('13kg');
   const [gasType, setGasType] = useState('Propane');
 
+  // Multi-device sync
+  const pollCountRef = useRef(0);
+
+  // Helper: build readings map from meter_readings rows
+  function buildReadingsMap(readingsData) {
+    const map = {};
+    (readingsData || []).forEach(r => {
+      const isDormant = Number(r.reading) === 0 && Number(r.previous_reading) === 0 && Number(r.usage_kwh) === 0;
+      map[r.pitch_id] = {
+        reading: r.reading,
+        previous_reading: r.previous_reading,
+        usage_kwh: r.usage_kwh,
+        dormant: isDormant,
+        read_at: r.read_at || r.created_at,
+        pitch_number: r.pitches?.pitch_number,
+        customer_name: r.pitches?.customer_name,
+        meter_id: r.pitches?.meter_id,
+      };
+    });
+    return map;
+  }
+
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
@@ -93,6 +115,58 @@ function ReadingsContent() {
       }
     }
   }, [searchParams, pitches]);
+
+  // ---- Multi-device sync polling ----
+  useEffect(() => {
+    if (!session || session.status !== 'active' || !supabase) return;
+    const sessionId = session.id;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('meter_readings')
+          .select('*, pitches(pitch_number, customer_name, meter_id)')
+          .eq('session_id', sessionId);
+
+        if (!data) return;
+        const readingsMap = buildReadingsMap(data);
+        const newCount = Object.keys(readingsMap).length;
+
+        if (newCount > pollCountRef.current) {
+          const diff = newCount - pollCountRef.current;
+          pollCountRef.current = newCount;
+
+          setSession(prev => {
+            if (!prev || prev.id !== sessionId) return prev;
+            const updated = { ...prev, readings: readingsMap };
+            const totalPitches = pitches.filter(p => p.meter_id).length;
+            if (newCount >= totalPitches && prev.status === 'active') {
+              updated.status = 'complete';
+              updated.completed_at = new Date().toISOString();
+              supabase.from('reading_sessions').update({
+                status: 'complete', completed_at: updated.completed_at,
+              }).eq('id', sessionId);
+            }
+            return updated;
+          });
+          setPastSessions(prev => prev.map(s =>
+            s.id === sessionId ? { ...s, readings: readingsMap } : s
+          ));
+          setToast(`${diff} reading(s) synced from another device`);
+          setTimeout(() => setToast(''), 3000);
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [session?.id, session?.status]);
+
+  // Keep polling count in sync with local session changes
+  useEffect(() => {
+    pollCountRef.current = session ? Object.keys(session.readings).length : 0;
+  }, [session]);
 
   // ---- Load data ----
   async function loadData() {
@@ -130,26 +204,69 @@ function ReadingsContent() {
   }
 
   // ---- Sessions persistence ----
-  function loadSessions() {
-    try {
-      const saved = localStorage.getItem('pm_reading_sessions');
-      if (saved) {
-        const all = JSON.parse(saved);
-        setPastSessions(all);
-        // Resume active session if exists
-        const active = all.find(s => s.status === 'active');
-        if (active) {
-          setSession(active);
-          // Find next incomplete pitch
-          const idx = pitchesForSession().findIndex(p => !active.readings[p.id]);
-          setSessionPitchIndex(idx >= 0 ? idx : 0);
-          setTab('session');
+  async function loadSessions() {
+    if (!supabase) {
+      // Demo/offline: keep localStorage fallback
+      try {
+        const saved = localStorage.getItem('pm_reading_sessions');
+        if (saved) {
+          const all = JSON.parse(saved);
+          setPastSessions(all);
+          const active = all.find(s => s.status === 'active');
+          if (active) {
+            setSession(active);
+            setSessionPitchIndex(0);
+            setTab('session');
+          }
         }
+      } catch {}
+      return;
+    }
+
+    // Load from Supabase
+    try {
+      const { data: sessions } = await supabase
+        .from('reading_sessions')
+        .select('*')
+        .order('started_at', { ascending: false });
+
+      if (!sessions || sessions.length === 0) { setPastSessions([]); return; }
+
+      // Load all readings for all sessions in one query
+      const allSessionIds = sessions.map(s => s.id);
+      const { data: allReadings } = await supabase
+        .from('meter_readings')
+        .select('*, pitches(pitch_number, customer_name, meter_id)')
+        .in('session_id', allSessionIds);
+
+      // Group readings by session_id
+      const readingsBySession = {};
+      (allReadings || []).forEach(r => {
+        if (!readingsBySession[r.session_id]) readingsBySession[r.session_id] = [];
+        readingsBySession[r.session_id].push(r);
+      });
+
+      const sessionsWithReadings = sessions.map(s => ({
+        ...s,
+        readings: buildReadingsMap(readingsBySession[s.id] || []),
+      }));
+
+      setPastSessions(sessionsWithReadings);
+
+      // Resume active session if exists
+      const active = sessionsWithReadings.find(s => s.status === 'active');
+      if (active) {
+        setSession(active);
+        setSessionPitchIndex(0);
+        setTab('session');
       }
-    } catch {}
+    } catch (err) {
+      console.error('Failed to load sessions:', err);
+    }
   }
 
   function saveSessions(allSessions) {
+    // Only used for demo/offline mode
     try { localStorage.setItem('pm_reading_sessions', JSON.stringify(allSessions)); } catch {}
     setPastSessions(allSessions);
   }
@@ -461,7 +578,7 @@ function ReadingsContent() {
     return pastSessions.find(s => s.status === 'active');
   }
 
-  function startNewSession() {
+  async function startNewSession() {
     // Block if there's an incomplete session
     const incomplete = getIncompleteSession();
     if (incomplete) {
@@ -473,25 +590,54 @@ function ReadingsContent() {
       return;
     }
 
-    const newSession = {
-      id: 'ses_' + Date.now(),
-      started_at: new Date().toISOString(),
-      readings: {},
+    const sessionName = `Reading Session — ${new Date().toLocaleDateString('en-GB')}`;
+
+    if (!supabase) {
+      // Demo/offline: localStorage
+      const newSession = {
+        id: 'ses_' + Date.now(),
+        started_at: new Date().toISOString(),
+        readings: {},
+        status: 'active',
+        name: sessionName,
+      };
+      setSession(newSession);
+      setSessionPitchIndex(0);
+      setNewReading('');
+      setCapturedImage(null);
+      setOcrConfidence(null);
+      setTab('session');
+      const all = [...pastSessions.filter(s => s.id !== newSession.id), newSession];
+      saveSessions(all);
+      setToast('Reading session started');
+      setTimeout(() => setToast(''), 3000);
+      return;
+    }
+
+    // Create in Supabase
+    const u = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const { data, error } = await supabase.from('reading_sessions').insert({
+      name: sessionName,
       status: 'active',
-      name: `Reading Session — ${new Date().toLocaleDateString('en-GB')}`,
-    };
+      started_by: u.full_name || u.email || 'Unknown',
+    }).select().single();
+
+    if (error) {
+      setToast('Error creating session: ' + error.message);
+      setTimeout(() => setToast(''), 4000);
+      return;
+    }
+
+    const newSession = { ...data, readings: {} };
     setSession(newSession);
     setSessionPitchIndex(0);
     setNewReading('');
     setCapturedImage(null);
     setOcrConfidence(null);
     setTab('session');
-
-    // Save to localStorage
-    const all = [...pastSessions.filter(s => s.id !== newSession.id), newSession];
-    saveSessions(all);
-    setToast('Reading session started');
-    setTimeout(() => setToast(''), 3000);
+    setPastSessions(prev => [newSession, ...prev]);
+    setToast('Reading session started — other devices can join this session');
+    setTimeout(() => setToast(''), 4000);
   }
 
   // ---- Baseline readings (first-time setup) ----
@@ -593,6 +739,109 @@ function ReadingsContent() {
     });
   }
 
+  async function markDormant(pitch) {
+    if (!session || !pitch) return;
+    if (!confirm(`Mark ${pitch.pitch_number} as dormant (no reading needed)?`)) return;
+
+    // Save a dormant reading marker to DB
+    const payload = {
+      pitch_id: pitch.id,
+      reading: 0,
+      previous_reading: 0,
+      usage_kwh: 0,
+      session_id: session.id,
+    };
+
+    if (supabase) {
+      // Check no existing reading for this pitch in this session
+      const { data: existing } = await supabase
+        .from('meter_readings')
+        .select('id')
+        .eq('session_id', session.id)
+        .eq('pitch_id', pitch.id)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        setToast(`${pitch.pitch_number} already has a reading in this session`);
+        setTimeout(() => setToast(''), 3000);
+        return;
+      }
+      await supabase.from('meter_readings').insert(payload);
+    } else {
+      const newR = {
+        id: String(Date.now()), ...payload,
+        read_at: new Date().toISOString(),
+        pitch: { pitch_number: pitch.pitch_number, customer_name: pitch.customer_name },
+      };
+      setReadings(prev => [newR, ...prev]);
+    }
+
+    // Update session locally
+    const updatedSession = {
+      ...session,
+      readings: {
+        ...session.readings,
+        [pitch.id]: {
+          reading: 0,
+          previous_reading: 0,
+          usage_kwh: 0,
+          dormant: true,
+          read_at: new Date().toISOString(),
+          pitch_number: pitch.pitch_number,
+          customer_name: pitch.customer_name,
+          meter_id: pitch.meter_id,
+        },
+      },
+    };
+
+    const sPitches = pitchesForSession();
+    const completedCount = Object.keys(updatedSession.readings).length;
+    if (completedCount >= sPitches.length) {
+      updatedSession.status = 'complete';
+      updatedSession.completed_at = new Date().toISOString();
+    }
+
+    updateSession(updatedSession);
+    setToast(`${pitch.pitch_number} marked as dormant`);
+    setTimeout(() => setToast(''), 3000);
+
+    // Auto advance
+    setNewReading('');
+    setCapturedImage(null);
+    setOcrConfidence(null);
+
+    if (updatedSession.status === 'complete') {
+      setToast('All readings complete! Session finished.');
+      setTimeout(() => setToast(''), 4000);
+    } else {
+      const nextIdx = sPitches.findIndex((p, i) => i > sessionPitchIndex && !updatedSession.readings[p.id]);
+      if (nextIdx >= 0) setSessionPitchIndex(nextIdx);
+      else {
+        const wrap = sPitches.findIndex(p => !updatedSession.readings[p.id]);
+        if (wrap >= 0) setSessionPitchIndex(wrap);
+      }
+    }
+  }
+
+  async function unmarkDormant(pitch) {
+    if (!session || !pitch) return;
+
+    // Remove the dormant reading from DB
+    if (supabase) {
+      await supabase.from('meter_readings')
+        .delete()
+        .eq('session_id', session.id)
+        .eq('pitch_id', pitch.id);
+    }
+
+    // Remove from session locally
+    const updatedReadings = { ...session.readings };
+    delete updatedReadings[pitch.id];
+    const updatedSession = { ...session, readings: updatedReadings, status: 'active', completed_at: null };
+    updateSession(updatedSession);
+    setToast(`${pitch.pitch_number} marked as live — ready for reading`);
+    setTimeout(() => setToast(''), 3000);
+  }
+
   function resumeSession(sess) {
     setSession(sess);
     const sPitches = pitchesForSession(sess);
@@ -606,11 +855,27 @@ function ReadingsContent() {
     setTimeout(() => setToast(''), 3000);
   }
 
-  function updateSession(updatedSession) {
+  async function updateSession(updatedSession) {
     setSession(updatedSession);
-    const all = pastSessions.map(s => s.id === updatedSession.id ? updatedSession : s);
-    if (!all.find(s => s.id === updatedSession.id)) all.push(updatedSession);
-    saveSessions(all);
+
+    if (!supabase) {
+      const all = pastSessions.map(s => s.id === updatedSession.id ? updatedSession : s);
+      if (!all.find(s => s.id === updatedSession.id)) all.push(updatedSession);
+      saveSessions(all);
+      return;
+    }
+
+    // Update session row in Supabase (status, completed_at only — readings are in meter_readings)
+    await supabase.from('reading_sessions').update({
+      status: updatedSession.status,
+      completed_at: updatedSession.completed_at || null,
+    }).eq('id', updatedSession.id);
+
+    setPastSessions(prev => {
+      const all = prev.map(s => s.id === updatedSession.id ? updatedSession : s);
+      if (!all.find(s => s.id === updatedSession.id)) all.push(updatedSession);
+      return all;
+    });
   }
 
   async function saveSessionReading() {
@@ -621,12 +886,24 @@ function ReadingsContent() {
     const pitch = sPitches[sessionPitchIndex];
     if (!pitch) { setSaving(false); return; }
 
+    // Duplicate check — another device may have already read this pitch
+    if (session.readings[pitch.id]) {
+      setToast(`${pitch.pitch_number} already read (possibly by another device). Skipping to next.`);
+      setTimeout(() => setToast(''), 3000);
+      setSaving(false);
+      const nextIdx = sPitches.findIndex((p, i) => i > sessionPitchIndex && !session.readings[p.id]);
+      if (nextIdx >= 0) setSessionPitchIndex(nextIdx);
+      return;
+    }
+
     const readingVal = parseFloat(newReading);
     let prevReading = 0;
 
     if (supabase) {
+      // Get previous reading EXCLUDING current session readings
       const { data: prev } = await supabase
         .from('meter_readings').select('reading').eq('pitch_id', pitch.id)
+        .or(`session_id.is.null,session_id.neq.${session.id}`)
         .order('read_at', { ascending: false }).limit(1);
       if (prev && prev.length > 0) prevReading = Number(prev[0].reading);
     } else {
@@ -635,7 +912,13 @@ function ReadingsContent() {
     }
 
     const usage = Math.max(0, readingVal - prevReading);
-    const payload = { pitch_id: pitch.id, reading: readingVal, previous_reading: prevReading, usage_kwh: usage };
+    const payload = {
+      pitch_id: pitch.id,
+      reading: readingVal,
+      previous_reading: prevReading,
+      usage_kwh: usage,
+      session_id: session.id, // Link reading to session for multi-device sync
+    };
 
     // Save to DB
     if (!supabase) {
@@ -647,6 +930,29 @@ function ReadingsContent() {
       setReadings(prev => [newR, ...prev]);
     } else {
       try {
+        // Double-check no duplicate in DB (race condition guard)
+        const { data: existing } = await supabase
+          .from('meter_readings')
+          .select('id')
+          .eq('session_id', session.id)
+          .eq('pitch_id', pitch.id)
+          .limit(1);
+        if (existing && existing.length > 0) {
+          setToast(`${pitch.pitch_number} was just read by another device. Moving on.`);
+          setTimeout(() => setToast(''), 3000);
+          setSaving(false);
+          // Refresh session readings
+          const { data: freshReadings } = await supabase
+            .from('meter_readings')
+            .select('*, pitches(pitch_number, customer_name, meter_id)')
+            .eq('session_id', session.id);
+          if (freshReadings) {
+            const map = buildReadingsMap(freshReadings);
+            setSession(prev => prev ? { ...prev, readings: map } : prev);
+          }
+          return;
+        }
+
         await supabase.from('meter_readings').insert(payload);
       } catch (err) {
         setToast('Error: ' + err.message);
@@ -655,7 +961,7 @@ function ReadingsContent() {
       }
     }
 
-    // Update session
+    // Update session locally
     const updatedSession = {
       ...session,
       readings: {
@@ -701,7 +1007,6 @@ function ReadingsContent() {
         nextIdx++;
       }
       if (nextIdx >= totalPitches) {
-        // Wrap around to find any skipped
         nextIdx = sPitches.findIndex(p => !updatedSession.readings[p.id]);
       }
       if (nextIdx >= 0) setSessionPitchIndex(nextIdx);
@@ -735,10 +1040,22 @@ function ReadingsContent() {
     setTimeout(() => setToast(''), 3000);
   }
 
-  function deleteSession(sessId) {
-    const all = pastSessions.filter(s => s.id !== sessId);
-    saveSessions(all);
+  async function deleteSession(sessId) {
+    if (!confirm('Delete this session and all its readings?')) return;
+
+    if (supabase) {
+      // Delete readings first, then session
+      await supabase.from('meter_readings').delete().eq('session_id', sessId);
+      await supabase.from('reading_sessions').delete().eq('id', sessId);
+      setPastSessions(prev => prev.filter(s => s.id !== sessId));
+    } else {
+      const all = pastSessions.filter(s => s.id !== sessId);
+      saveSessions(all);
+    }
+
     if (session?.id === sessId) { setSession(null); setTab('readings'); }
+    setToast('Session deleted');
+    setTimeout(() => setToast(''), 3000);
   }
 
   // ---- Session Export ----
@@ -747,20 +1064,32 @@ function ReadingsContent() {
     const doc = new jsPDF();
 
     // Load settings
-    let siteName = 'Park Manager AI', hoName = '', managerEmail = '', unitRate = '0.34';
-    try {
-      const saved = localStorage.getItem('pm_settings');
-      if (saved) {
-        JSON.parse(saved).forEach(s => {
+    let siteName = 'Park Manager AI', hoName = '', managerEmail = '', rateStr = '0.34';
+    if (supabase) {
+      try {
+        const { data } = await supabase.from('site_settings').select('*');
+        (data || []).forEach(s => {
           if (s.key === 'site_name') siteName = s.value;
           if (s.key === 'ho_name') hoName = s.value;
           if (s.key === 'manager_email') managerEmail = s.value;
-          if (s.key === 'electricity_unit_rate') unitRate = s.value;
+          if (s.key === 'electricity_unit_rate') rateStr = s.value;
         });
-      }
-    } catch {}
+      } catch {}
+    } else {
+      try {
+        const saved = localStorage.getItem('pm_settings');
+        if (saved) {
+          JSON.parse(saved).forEach(s => {
+            if (s.key === 'site_name') siteName = s.value;
+            if (s.key === 'ho_name') hoName = s.value;
+            if (s.key === 'manager_email') managerEmail = s.value;
+            if (s.key === 'electricity_unit_rate') rateStr = s.value;
+          });
+        }
+      } catch {}
+    }
 
-    const rate = parseFloat(unitRate) || 0.34;
+    const rate = parseFloat(rateStr) || 0.34;
     const sPitches = pitches.filter(p => p.meter_id);
 
     // Header
@@ -814,12 +1143,21 @@ function ReadingsContent() {
     y += 6;
     doc.setTextColor(0);
 
+    const dormantCount = completedReadings.filter(([, r]) => r.dormant).length;
+
     for (const p of sPitches) {
       if (y > 275) { doc.addPage(); y = 20; }
       const r = sess.readings[p.id];
       doc.setFontSize(8);
 
-      if (r) {
+      if (r && r.dormant) {
+        doc.setTextColor(150);
+        doc.text(p.pitch_number, 16, y);
+        doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
+        doc.text(r.meter_id || p.meter_id || '', 86, y);
+        doc.text('DORMANT', 134, y);
+        doc.setTextColor(0);
+      } else if (r) {
         doc.text(p.pitch_number, 16, y);
         doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
         doc.text(r.meter_id || p.meter_id || '', 86, y);
@@ -837,6 +1175,14 @@ function ReadingsContent() {
         doc.setTextColor(0);
       }
       y += 5;
+    }
+
+    // Dormant summary
+    if (dormantCount > 0) {
+      y += 4;
+      doc.setFontSize(8);
+      doc.setTextColor(120);
+      doc.text(`${dormantCount} pitch${dormantCount !== 1 ? 'es' : ''} marked as dormant (no meter reading taken)`, 14, y);
     }
 
     // Footer
@@ -943,11 +1289,20 @@ function ReadingsContent() {
     // Table rows
     y += 6;
     doc.setTextColor(0);
+    const emailDormantCount = completedReadings.filter(([, r]) => r.dormant).length;
+
     for (const p of sPitches) {
       if (y > 275) { doc.addPage(); y = 20; }
       const r = sess.readings[p.id];
       doc.setFontSize(8);
-      if (r) {
+      if (r && r.dormant) {
+        doc.setTextColor(150);
+        doc.text(p.pitch_number, 16, y);
+        doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
+        doc.text(r.meter_id || p.meter_id || '', 86, y);
+        doc.text('DORMANT', 134, y);
+        doc.setTextColor(0);
+      } else if (r) {
         doc.text(p.pitch_number, 16, y);
         doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
         doc.text(r.meter_id || p.meter_id || '', 86, y);
@@ -965,6 +1320,13 @@ function ReadingsContent() {
         doc.setTextColor(0);
       }
       y += 5;
+    }
+
+    if (emailDormantCount > 0) {
+      y += 4;
+      doc.setFontSize(8);
+      doc.setTextColor(120);
+      doc.text(`${emailDormantCount} pitch${emailDormantCount !== 1 ? 'es' : ''} marked as dormant (no meter reading taken)`, 14, y);
     }
 
     // Footer
@@ -1533,7 +1895,10 @@ function ReadingsContent() {
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <h3 className="text-sm font-bold text-slate-900">{session.name}</h3>
-                      <p className="text-xs text-slate-400">{sessionCompleted} of {sessionTotal} meters read</p>
+                      <p className="text-xs text-slate-400">
+                        {sessionCompleted} of {sessionTotal} meters read
+                        {session.started_by && <span className="ml-1 text-teal-500">· Started by {session.started_by}</span>}
+                      </p>
                       {sessionCompleted > 0 && (() => {
                         const totalUsage = Object.values(session.readings).reduce((sum, r) => sum + (r.usage_kwh || 0), 0);
                         const totalCost = (totalUsage * unitRate).toFixed(2);
@@ -1560,26 +1925,60 @@ function ReadingsContent() {
                   </div>
                 </div>
 
-                {/* Pitch scroll list (mini pills) */}
-                <div className="flex gap-1.5 overflow-x-auto pb-1 px-0.5">
-                  {sessionPitches.map((p, idx) => {
-                    const done = !!session.readings[p.id];
-                    const active = idx === sessionPitchIndex;
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => sessionGoToPitch(idx)}
-                        className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                          active ? 'bg-emerald-600 text-white border-emerald-600' :
-                          done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                          'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        {done && !active && <span className="mr-0.5">&#10003;</span>}
-                        {p.pitch_number}
-                      </button>
-                    );
-                  })}
+                {/* Full pitch list — green/red live status */}
+                <div className="bg-white rounded-xl border overflow-hidden">
+                  <div className="px-4 py-2.5 bg-slate-50 border-b flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-slate-600">All Pitches</h4>
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
+                        <span className="w-2 h-2 bg-emerald-500 rounded-full inline-block" />
+                        {sessionCompleted} done
+                      </span>
+                      <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
+                        <span className="w-2 h-2 bg-red-400 rounded-full inline-block" />
+                        {sessionTotal - sessionCompleted} remaining
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-px bg-slate-100 max-h-[40vh] overflow-y-auto">
+                    {sessionPitches.map((p, idx) => {
+                      const done = !!session.readings[p.id];
+                      const active = idx === sessionPitchIndex;
+                      const r = session.readings[p.id];
+                      const isDormant = r?.dormant;
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => sessionGoToPitch(idx)}
+                          className={`p-3 text-left transition-colors ${
+                            active ? 'bg-emerald-50 ring-2 ring-inset ring-emerald-500' :
+                            isDormant ? 'bg-slate-50' :
+                            done ? 'bg-emerald-50/50' : 'bg-white hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                              isDormant ? 'bg-slate-400 text-white' :
+                              done ? 'bg-emerald-500 text-white' : 'bg-red-100 text-red-500 border border-red-200'
+                            }`}>
+                              {isDormant ? '\u2014' : done ? '\u2713' : '\u2717'}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-bold text-slate-800 truncate">{p.pitch_number}</p>
+                              <p className="text-xs text-slate-400 truncate">{p.customer_name || 'Vacant'}</p>
+                            </div>
+                          </div>
+                          {isDormant ? (
+                            <p className="text-xs text-slate-400 italic mt-1">Dormant</p>
+                          ) : done && r ? (
+                            <p className="text-xs text-emerald-600 font-mono mt-1 truncate">
+                              {r.reading} &mdash; {r.usage_kwh} kWh
+                            </p>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Current pitch card + reading form */}
@@ -1603,19 +2002,38 @@ function ReadingsContent() {
                     </div>
 
                     {/* Already recorded info */}
-                    {currentPitchDone && (
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4">
-                        <p className="text-sm text-emerald-800 font-medium">
-                          Reading: <span className="font-mono">{session.readings[currentSessionPitch.id].reading}</span>
-                          <span className="text-emerald-600 ml-2">({session.readings[currentSessionPitch.id].usage_kwh} kWh)</span>
-                          <span className="text-blue-600 ml-2 font-bold">&pound;{((session.readings[currentSessionPitch.id].usage_kwh || 0) * unitRate).toFixed(2)}</span>
-                        </p>
-                        <p className="text-xs text-emerald-600">
-                          Recorded at {new Date(session.readings[currentSessionPitch.id].read_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                          <span className="text-slate-400 ml-2">@ &pound;{unitRate.toFixed(2)}/kWh</span>
-                        </p>
-                      </div>
-                    )}
+                    {currentPitchDone && (() => {
+                      const cr = session.readings[currentSessionPitch.id];
+                      const isDormant = cr?.dormant;
+                      return isDormant ? (
+                        <div className="bg-slate-100 border border-slate-300 rounded-lg p-3 mb-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm text-slate-600 font-medium italic">Marked as Dormant — no reading taken</p>
+                              <p className="text-xs text-slate-400">
+                                Marked at {new Date(cr.read_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            </div>
+                            <button onClick={() => unmarkDormant(currentSessionPitch)}
+                              className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500">
+                              Mark Live
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4">
+                          <p className="text-sm text-emerald-800 font-medium">
+                            Reading: <span className="font-mono">{cr.reading}</span>
+                            <span className="text-emerald-600 ml-2">({cr.usage_kwh} kWh)</span>
+                            <span className="text-blue-600 ml-2 font-bold">&pound;{((cr.usage_kwh || 0) * unitRate).toFixed(2)}</span>
+                          </p>
+                          <p className="text-xs text-emerald-600">
+                            Recorded at {new Date(cr.read_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                            <span className="text-slate-400 ml-2">@ &pound;{unitRate.toFixed(2)}/kWh</span>
+                          </p>
+                        </div>
+                      );
+                    })()}
 
                     {/* Last reading info (for pitches not yet done) */}
                     {!currentPitchDone && (() => {
@@ -1663,15 +2081,24 @@ function ReadingsContent() {
 
                     {/* Reading input */}
                     {!currentPitchDone && (
-                      <div className="flex items-end gap-2">
-                        <div className="flex-1">
-                          <label className="block text-xs font-medium text-slate-500 mb-1">Reading (kWh)</label>
-                          <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" />
+                      <div className="space-y-3">
+                        <div className="flex items-end gap-2">
+                          <div className="flex-1">
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Reading (kWh)</label>
+                            <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" />
+                          </div>
+                          <button onClick={saveSessionReading} disabled={!newReading || saving}
+                            className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-emerald-500 transition-colors">
+                            {saving ? 'Saving...' : 'Save'}
+                          </button>
                         </div>
-                        <button onClick={saveSessionReading} disabled={!newReading || saving}
-                          className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-emerald-500 transition-colors">
-                          {saving ? 'Saving...' : 'Save'}
+                        <button onClick={() => markDormant(currentSessionPitch)}
+                          className="w-full py-2 bg-slate-100 text-slate-500 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors flex items-center justify-center gap-1.5">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                          Mark as Dormant — no reading needed
                         </button>
                       </div>
                     )}
@@ -1770,17 +2197,26 @@ function ReadingsContent() {
                     <div className="divide-y divide-slate-100">
                       {sessionPitches.filter(p => session.readings[p.id]).map(p => {
                         const r = session.readings[p.id];
+                        const isDormant = r?.dormant;
                         return (
-                          <div key={p.id} className="px-4 py-2.5 flex items-center justify-between">
+                          <div key={p.id} className={`px-4 py-2.5 flex items-center justify-between ${isDormant ? 'bg-slate-50' : ''}`}>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-emerald-600">&#10003;</span>
+                              <span className={`text-xs font-bold ${isDormant ? 'text-slate-400' : 'text-emerald-600'}`}>
+                                {isDormant ? '\u2014' : '\u2713'}
+                              </span>
                               <span className="text-sm font-medium text-slate-800">{p.pitch_number}</span>
                               <span className="text-xs text-slate-400">{r.customer_name || p.customer_name || 'Vacant'}</span>
                             </div>
                             <div className="text-right">
-                              <span className="text-sm font-mono text-slate-700">{r.reading}</span>
-                              <span className="text-xs text-emerald-600 ml-2">{r.usage_kwh} kWh</span>
-                              <span className="text-xs text-blue-600 font-bold ml-1">&pound;{((r.usage_kwh || 0) * unitRate).toFixed(2)}</span>
+                              {isDormant ? (
+                                <span className="text-xs text-slate-400 italic">Dormant</span>
+                              ) : (
+                                <>
+                                  <span className="text-sm font-mono text-slate-700">{r.reading}</span>
+                                  <span className="text-xs text-emerald-600 ml-2">{r.usage_kwh} kWh</span>
+                                  <span className="text-xs text-blue-600 font-bold ml-1">&pound;{((r.usage_kwh || 0) * unitRate).toFixed(2)}</span>
+                                </>
+                              )}
                             </div>
                           </div>
                         );
