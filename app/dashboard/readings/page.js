@@ -62,6 +62,9 @@ function ReadingsContent() {
   // Unit rate (£/kWh) from site settings
   const [unitRate, setUnitRate] = useState(0.34);
 
+  // Email sending state
+  const [sendingEmail, setSendingEmail] = useState(null); // 'manager' | 'head_office' | null
+
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
@@ -759,42 +762,146 @@ function ReadingsContent() {
   }
 
   async function emailSessionReport(sess, recipientType) {
-    let recipientEmail = '';
-    try {
-      const saved = localStorage.getItem('pm_settings');
-      if (saved) {
-        JSON.parse(saved).forEach(s => {
+    setSendingEmail(recipientType);
+
+    // Load settings from Supabase or localStorage
+    let recipientEmail = '', siteName = 'Park Manager AI', hoName = '', rate = unitRate;
+    if (supabase) {
+      try {
+        const { data } = await supabase.from('site_settings').select('*');
+        (data || []).forEach(s => {
+          if (s.key === 'site_name') siteName = s.value;
+          if (s.key === 'ho_name') hoName = s.value;
+          if (s.key === 'electricity_unit_rate') rate = parseFloat(s.value) || 0.34;
           if (recipientType === 'manager' && s.key === 'manager_email') recipientEmail = s.value;
           if (recipientType === 'head_office' && s.key === 'ho_email') recipientEmail = s.value;
         });
-      }
-    } catch {}
+      } catch {}
+    } else {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pm_settings') || '[]');
+        saved.forEach(s => {
+          if (s.key === 'site_name') siteName = s.value;
+          if (s.key === 'ho_name') hoName = s.value;
+          if (s.key === 'electricity_unit_rate') rate = parseFloat(s.value) || 0.34;
+          if (recipientType === 'manager' && s.key === 'manager_email') recipientEmail = s.value;
+          if (recipientType === 'head_office' && s.key === 'ho_email') recipientEmail = s.value;
+        });
+      } catch {}
+    }
 
     if (!recipientEmail) {
       setToast(`No ${recipientType === 'manager' ? 'manager' : 'head office'} email configured. Set it in Settings.`);
       setTimeout(() => setToast(''), 4000);
+      setSendingEmail(null);
       return;
     }
 
-    // Build readings HTML
+    // Generate PDF in memory
+    const { default: jsPDF } = await import('jspdf');
+    const doc = new jsPDF();
     const sPitches = pitches.filter(p => p.meter_id);
     const completedReadings = Object.entries(sess.readings);
-    let unitRate = 0.34;
-    try {
-      const saved = localStorage.getItem('pm_settings');
-      if (saved) JSON.parse(saved).forEach(s => { if (s.key === 'electricity_unit_rate') unitRate = parseFloat(s.value); });
-    } catch {}
-
     const totalUsage = completedReadings.reduce((sum, [, r]) => sum + (r.usage_kwh || 0), 0);
-    let rows = '';
+    const totalCost = (totalUsage * rate).toFixed(2);
+
+    // Header
+    doc.setFontSize(18);
+    doc.setTextColor(16, 185, 129);
+    doc.text(siteName, 14, 20);
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text('Meter Reading Session Report', 14, 28);
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text(`Session: ${sess.name || 'Reading Session'}`, 14, 35);
+    doc.text(`Date: ${new Date(sess.started_at).toLocaleDateString('en-GB')} ${sess.completed_at ? '(Completed)' : '(In Progress)'}`, 14, 40);
+    if (recipientType === 'head_office' && hoName) doc.text(`To: ${hoName}`, 14, 45);
+    if (recipientType === 'manager' && recipientEmail) doc.text(`To: Site Manager (${recipientEmail})`, 14, 45);
+
+    // Summary
+    let y = 55;
+    doc.setFontSize(10);
+    doc.setTextColor(0);
+    doc.text(`Pitches Read: ${completedReadings.length} / ${sPitches.length}`, 14, y);
+    doc.text(`Total Usage: ${totalUsage.toLocaleString()} kWh`, 100, y);
+    doc.text(`Total Cost: £${totalCost} @ £${rate}/kWh`, 14, y + 6);
+
+    // Table header
+    y += 16;
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, y - 4, 182, 8, 'F');
+    doc.setFontSize(8);
+    doc.setTextColor(100);
+    doc.text('Pitch', 16, y);
+    doc.text('Customer', 36, y);
+    doc.text('Meter ID', 86, y);
+    doc.text('Previous', 112, y);
+    doc.text('Reading', 134, y);
+    doc.text('Usage', 156, y);
+    doc.text('Cost', 182, y);
+
+    // Table rows
+    y += 6;
+    doc.setTextColor(0);
     for (const p of sPitches) {
+      if (y > 275) { doc.addPage(); y = 20; }
       const r = sess.readings[p.id];
+      doc.setFontSize(8);
       if (r) {
-        rows += `<tr><td style="padding:6px;border-bottom:1px solid #e2e8f0">${p.pitch_number}</td><td style="padding:6px;border-bottom:1px solid #e2e8f0">${r.customer_name || p.customer_name || 'Vacant'}</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right">${r.previous_reading}</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right">${r.reading}</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:bold;color:#10b981">${r.usage_kwh} kWh</td><td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right">£${(r.usage_kwh * unitRate).toFixed(2)}</td></tr>`;
+        doc.text(p.pitch_number, 16, y);
+        doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
+        doc.text(r.meter_id || p.meter_id || '', 86, y);
+        doc.text(String(r.previous_reading || 0), 112, y);
+        doc.text(String(r.reading), 134, y);
+        doc.setTextColor(16, 185, 129);
+        doc.text(String(r.usage_kwh || 0), 160, y);
+        doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 182, y);
+        doc.setTextColor(0);
+      } else {
+        doc.setTextColor(180);
+        doc.text(p.pitch_number, 16, y);
+        doc.text((p.customer_name || 'Vacant').substring(0, 25), 36, y);
+        doc.text('— not read —', 134, y);
+        doc.setTextColor(0);
       }
+      y += 5;
     }
 
-    const html = `<div style="font-family:sans-serif;max-width:700px"><h2 style="color:#10b981">Meter Reading Report</h2><p><strong>Session:</strong> ${sess.name}</p><p><strong>Date:</strong> ${new Date(sess.started_at).toLocaleDateString('en-GB')}</p><p><strong>Readings:</strong> ${completedReadings.length}/${sPitches.length} | <strong>Total Usage:</strong> ${totalUsage.toLocaleString()} kWh | <strong>Total Cost:</strong> £${(totalUsage * unitRate).toFixed(2)}</p><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="padding:6px;text-align:left">Pitch</th><th style="padding:6px;text-align:left">Customer</th><th style="padding:6px;text-align:right">Previous</th><th style="padding:6px;text-align:right">Reading</th><th style="padding:6px;text-align:right">Usage</th><th style="padding:6px;text-align:right">Cost</th></tr></thead><tbody>${rows}</tbody></table><p style="color:#94a3b8;font-size:11px;margin-top:20px">Generated by Park Manager AI</p></div>`;
+    // Footer
+    y += 8;
+    if (y > 270) { doc.addPage(); y = 20; }
+    doc.setFontSize(7);
+    doc.setTextColor(150);
+    doc.text(`Generated by ${siteName} on ${new Date().toLocaleString('en-GB')}`, 14, y);
+
+    // Convert PDF to base64
+    const pdfBase64 = doc.output('datauristring').split(',')[1];
+    const fileName = `MeterReadings-${new Date(sess.started_at).toISOString().slice(0, 10)}.pdf`;
+
+    // Build email body (summary HTML)
+    const emailBody = `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+        <div style="background:#059669;padding:20px;border-radius:12px 12px 0 0;">
+          <h1 style="color:#fff;margin:0;font-size:20px;">Meter Reading Report</h1>
+        </div>
+        <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;">
+          <p style="font-size:14px;color:#1e293b;margin:0 0 8px;">
+            <strong>Session:</strong> ${sess.name || 'Reading Session'}<br/>
+            <strong>Date:</strong> ${new Date(sess.started_at).toLocaleDateString('en-GB')}<br/>
+            <strong>Status:</strong> ${sess.completed_at ? 'Completed' : 'In Progress'}
+          </p>
+          <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Pitches Read</td><td style="padding:8px 0;font-weight:700;font-size:13px;">${completedReadings.length} / ${sPitches.length}</td></tr>
+            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Total Usage</td><td style="padding:8px 0;font-weight:700;font-size:13px;">${totalUsage.toLocaleString()} kWh</td></tr>
+            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Unit Rate</td><td style="padding:8px 0;font-size:13px;">£${rate.toFixed(2)}/kWh</td></tr>
+            <tr><td style="padding:8px 0;color:#64748b;font-size:13px;">Total Cost</td><td style="padding:8px 0;font-weight:700;font-size:15px;color:#059669;">£${totalCost}</td></tr>
+          </table>
+          <p style="font-size:13px;color:#475569;">Please find the full meter reading report attached as a PDF.</p>
+          <p style="font-size:11px;color:#94a3b8;margin-top:20px;">Generated by ${siteName} — ParkManagerAI</p>
+        </div>
+      </div>
+    `;
 
     try {
       const res = await fetch('/api/send-report', {
@@ -802,19 +909,24 @@ function ReadingsContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: recipientEmail,
-          subject: `Meter Reading Report — ${new Date(sess.started_at).toLocaleDateString('en-GB')}`,
-          html,
+          subject: `Meter Reading Report — ${sess.name || 'Session'} — ${new Date(sess.started_at).toLocaleDateString('en-GB')}`,
+          body: emailBody,
+          pdfBase64,
+          fileName,
         }),
       });
+      const result = await res.json();
       if (res.ok) {
-        setToast(`Report emailed to ${recipientEmail}`);
+        setToast(result.demo ? `Demo mode — email would be sent to ${recipientEmail}` : `Report emailed to ${recipientEmail} with PDF attached`);
+        setShowExportModal(false);
       } else {
-        setToast('Failed to send email. Check server config.');
+        setToast(`Failed: ${result.error || 'Unknown error'}`);
       }
     } catch {
-      setToast('Email sending not available in demo mode. Use PDF export.');
+      setToast('Email sending not available. Use PDF export instead.');
     }
-    setTimeout(() => setToast(''), 4000);
+    setTimeout(() => setToast(''), 5000);
+    setSendingEmail(null);
   }
 
   // ---- Render ----
@@ -1038,13 +1150,13 @@ function ReadingsContent() {
                 <p className="text-xs text-slate-400">Complete report addressed to head office</p>
               </button>
               <hr className="my-2" />
-              <button onClick={() => emailSessionReport(exportSession, 'manager')} className="w-full text-left px-4 py-3 bg-teal-50 hover:bg-teal-100 rounded-xl text-sm transition-colors">
-                <span className="font-medium text-teal-800">Email to Site Manager</span>
-                <p className="text-xs text-teal-600">Send report via email</p>
+              <button onClick={() => emailSessionReport(exportSession, 'manager')} disabled={!!sendingEmail} className="w-full text-left px-4 py-3 bg-teal-50 hover:bg-teal-100 rounded-xl text-sm transition-colors disabled:opacity-50">
+                <span className="font-medium text-teal-800">{sendingEmail === 'manager' ? 'Sending...' : 'Email to Site Manager'}</span>
+                <p className="text-xs text-teal-600">{sendingEmail === 'manager' ? 'Generating PDF and sending email...' : 'Send report with PDF attachment'}</p>
               </button>
-              <button onClick={() => emailSessionReport(exportSession, 'head_office')} className="w-full text-left px-4 py-3 bg-teal-50 hover:bg-teal-100 rounded-xl text-sm transition-colors">
-                <span className="font-medium text-teal-800">Email to Head Office</span>
-                <p className="text-xs text-teal-600">Send report via email</p>
+              <button onClick={() => emailSessionReport(exportSession, 'head_office')} disabled={!!sendingEmail} className="w-full text-left px-4 py-3 bg-teal-50 hover:bg-teal-100 rounded-xl text-sm transition-colors disabled:opacity-50">
+                <span className="font-medium text-teal-800">{sendingEmail === 'head_office' ? 'Sending...' : 'Email to Head Office'}</span>
+                <p className="text-xs text-teal-600">{sendingEmail === 'head_office' ? 'Generating PDF and sending email...' : 'Send report with PDF attachment'}</p>
               </button>
             </div>
             <button onClick={() => setShowExportModal(false)} className="w-full mt-4 py-2 text-sm text-slate-500 hover:text-slate-700">Close</button>
