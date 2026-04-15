@@ -172,15 +172,8 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Site Logo</label>
             <div className="flex items-start gap-4">
               {siteLogo ? (
-                <div className="relative group">
+                <div className="relative">
                   <img src={siteLogo} alt="Site logo" className="w-20 h-20 object-contain rounded-xl border border-slate-200 bg-white p-1" />
-                  <button
-                    onClick={removeLogo}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-                    title="Remove logo"
-                  >
-                    &times;
-                  </button>
                 </div>
               ) : (
                 <div className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400">
@@ -193,17 +186,28 @@ export default function SettingsPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  accept="image/*"
                   onChange={handleLogoUpload}
                   className="hidden"
-                  id="logo-upload"
                 />
-                <label
-                  htmlFor="logo-upload"
-                  className="inline-block px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium cursor-pointer hover:bg-slate-200 transition-colors"
-                >
-                  {siteLogo ? 'Change Logo' : 'Upload Logo'}
-                </label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 active:bg-slate-300 transition-colors"
+                  >
+                    {siteLogo ? 'Change Logo' : 'Upload Logo'}
+                  </button>
+                  {siteLogo && (
+                    <button
+                      type="button"
+                      onClick={removeLogo}
+                      className="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 active:bg-red-200 transition-colors"
+                    >
+                      Remove Logo
+                    </button>
+                  )}
+                </div>
                 <p className="text-xs text-slate-400 mt-1.5">PNG, JPG or SVG. Max 500KB. Will be resized to 200px wide.</p>
               </div>
             </div>
