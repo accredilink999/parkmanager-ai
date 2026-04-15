@@ -16,8 +16,6 @@ export default function SettingsPage() {
   const [hoEmail, setHoEmail] = useState('');
   const [hoPhone, setHoPhone] = useState('');
   const [hoContact, setHoContact] = useState('');
-  const [monthEndDay, setMonthEndDay] = useState('last');
-  const [reportGenDay, setReportGenDay] = useState('1');
   const [managerEmail, setManagerEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
@@ -43,8 +41,6 @@ export default function SettingsPage() {
       if (s.key === 'ho_email') setHoEmail(s.value);
       if (s.key === 'ho_phone') setHoPhone(s.value);
       if (s.key === 'ho_contact') setHoContact(s.value);
-      if (s.key === 'month_end_day') setMonthEndDay(s.value);
-      if (s.key === 'report_gen_day') setReportGenDay(s.value);
       if (s.key === 'manager_email') setManagerEmail(s.value);
     });
   }
@@ -118,8 +114,6 @@ export default function SettingsPage() {
       { key: 'ho_email', value: hoEmail },
       { key: 'ho_phone', value: hoPhone },
       { key: 'ho_contact', value: hoContact },
-      { key: 'month_end_day', value: monthEndDay },
-      { key: 'report_gen_day', value: reportGenDay },
       { key: 'manager_email', value: managerEmail },
     ];
 
@@ -268,35 +262,6 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium text-slate-700 mb-1">Site Manager Email</label>
             <input type="email" value={managerEmail} onChange={e => setManagerEmail(e.target.value)} className={inputClass} placeholder="manager@mypark.co.uk" />
             <p className="text-xs text-slate-400 mt-1">Receives copies of reports and payment notifications.</p>
-          </div>
-        </div>
-
-        {/* Month Ending */}
-        <div className="bg-white rounded-xl border p-6 space-y-5">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Month Ending & Billing Cycle</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Configure when your billing month ends and when reports are generated.</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Month End Day</label>
-              <select value={monthEndDay} onChange={e => setMonthEndDay(e.target.value)} className={inputClass + ' bg-white'}>
-                <option value="last">Last day of month</option>
-                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
-                  <option key={d} value={String(d)}>{d}{d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'} of month</option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-400 mt-1">Readings taken up to this day are included in the month.</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Report Generation Day</label>
-              <select value={reportGenDay} onChange={e => setReportGenDay(e.target.value)} className={inputClass + ' bg-white'}>
-                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
-                  <option key={d} value={String(d)}>{d}{d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'} of following month</option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-400 mt-1">Day reports should be generated and sent out.</p>
-            </div>
           </div>
         </div>
 
