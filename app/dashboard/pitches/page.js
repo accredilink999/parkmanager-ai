@@ -301,34 +301,34 @@ export default function PitchesPage() {
             <Link href="/dashboard" className="text-slate-400 hover:text-slate-700 text-sm">&larr; Dashboard</Link>
             <h1 className="text-lg font-bold text-slate-900">Pitch List</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 flex-wrap justify-end">
             {pitches.length > 0 && (
               <>
                 <button
                   onClick={exportAllQRPdf}
-                  className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200 transition-colors flex items-center gap-1.5"
+                  className="px-2.5 py-2 bg-blue-100 text-blue-700 rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-200 transition-colors flex items-center gap-1"
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
-                  Export PDF
+                  PDF
                 </button>
                 <button
                   onClick={printAllQR}
-                  className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors flex items-center gap-1.5"
+                  className="px-2.5 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs sm:text-sm font-medium hover:bg-slate-200 transition-colors flex items-center gap-1"
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                   </svg>
-                  Print All QR
+                  Print QR
                 </button>
               </>
             )}
             <button
               onClick={() => { resetForm(); setShowForm(true); }}
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-500 transition-colors"
+              className="px-3 py-2 bg-teal-600 text-white rounded-lg text-xs sm:text-sm font-medium hover:bg-teal-500 transition-colors"
             >
-              + Add Pitch
+              + Add
             </button>
           </div>
         </div>
@@ -388,13 +388,15 @@ export default function PitchesPage() {
             <p className="text-sm text-slate-400">No pitches yet. Click &quot;Add Pitch&quot; to get started.</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border overflow-hidden">
+          <>
+          {/* Desktop table */}
+          <div className="bg-white rounded-xl border overflow-hidden hidden sm:block">
             <table className="w-full">
               <thead className="bg-slate-50 border-b">
                 <tr>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Pitch</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Customer</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 hidden sm:table-cell">Meter ID</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Meter ID</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Status</th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Actions</th>
                 </tr>
@@ -407,7 +409,7 @@ export default function PitchesPage() {
                       <p className="text-sm text-slate-900">{p.customer_name || '—'}</p>
                       {p.customer_email && <p className="text-xs text-slate-400">{p.customer_email}</p>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-600 hidden sm:table-cell">{p.meter_id || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{p.meter_id || '—'}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[p.status] || statusColors.vacant}`}>
                         {p.status}
@@ -423,6 +425,33 @@ export default function PitchesPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Mobile cards */}
+          <div className="space-y-2 sm:hidden">
+            {pitches.map(p => (
+              <div key={p.id} className="bg-white rounded-xl border p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-teal-600 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{p.pitch_number}</div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">{p.customer_name || 'Vacant'}</p>
+                      {p.customer_email && <p className="text-xs text-slate-400">{p.customer_email}</p>}
+                      {p.meter_id && <p className="text-xs text-slate-500">Meter: {p.meter_id}</p>}
+                    </div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[p.status] || statusColors.vacant}`}>
+                    {p.status}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mt-3 pt-3 border-t border-slate-100">
+                  <button onClick={() => setQrPitch(p)} className="text-xs text-teal-600 hover:text-teal-800 font-medium">QR Code</button>
+                  <button onClick={() => editPitch(p)} className="text-xs text-slate-500 hover:text-slate-700">Edit</button>
+                  <button onClick={() => deletePitch(p.id)} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          </>
         )}
       </div>
 

@@ -1,28 +1,63 @@
+import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.ionos.co.uk';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
-const SMTP_USER = process.env.SMTP_USER || 'info@accredilinkcare.co.uk';
+const SMTP_USER = process.env.SMTP_USER || 'hello@carecallai.co.uk';
 const SMTP_PASS = process.env.SMTP_PASS;
-const FROM_EMAIL = process.env.FROM_EMAIL || 'info@accredilinkcare.co.uk';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'hello@carecallai.co.uk';
 
 export async function POST(request) {
   try {
-    const { email, name, role, pitch } = await request.json();
+    const { email, name, role, pitch, orgId, orgName } = await request.json();
 
     if (!email) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
+    if (!orgId) {
+      return NextResponse.json({ error: 'Organization ID is required' }, { status: 400 });
+    }
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://parkmanager-ai.vercel.app';
-    const siteName = 'ParkManagerAI';
+    const siteName = orgName || 'ParkManagerAI';
     const tempPassword = generatePassword();
 
-    const html = buildInviteEmail({ name, email, role, pitch, siteUrl, siteName, tempPassword });
+    // Create user in Supabase auth
+    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: tempPassword,
+      email_confirm: true,
+    });
+
+    if (authError) {
+      // If user already exists, return friendly error
+      if (authError.message.includes('already been registered') || authError.message.includes('already exists')) {
+        return NextResponse.json({ error: 'This email is already registered. They can log in with their existing credentials.' }, { status: 400 });
+      }
+      return NextResponse.json({ error: authError.message }, { status: 400 });
+    }
+
+    // Create profile linked to the same org
+    const mappedRole = role === 'admin' ? 'admin' : role === 'developer' ? 'developer' : role === 'accounts' ? 'accounts' : 'customer';
+    await supabaseAdmin.from('profiles').upsert({
+      id: userData.user.id,
+      email,
+      full_name: name || email.split('@')[0],
+      role: mappedRole,
+      org_name: orgName || '',
+      org_id: orgId,
+    }, { onConflict: 'id' });
+
+    // Send invite email
+    const html = buildInviteEmail({ name, email, role: mappedRole, pitch, siteUrl, siteName, tempPassword });
     const subject = `You're invited to ${siteName}`;
 
-    // Send via IONOS SMTP
     if (SMTP_PASS) {
       const transporter = nodemailer.createTransport({
         host: SMTP_HOST,
@@ -32,17 +67,23 @@ export async function POST(request) {
       });
 
       await transporter.sendMail({
-        from: `"ParkManagerAI" <${FROM_EMAIL}>`,
+        from: `"${siteName}" <${FROM_EMAIL}>`,
         to: email,
         subject,
         html,
       });
 
-      return NextResponse.json({ success: true, message: `Invite sent to ${email}` });
+      return NextResponse.json({ success: true, message: `Invite sent to ${email}`, userId: userData.user.id });
     }
 
-    // Demo mode — no SMTP configured
-    return NextResponse.json({ success: true, message: `Invite sent to ${email} (demo mode — configure SMTP_PASS to send real emails)`, demo: true });
+    // No SMTP — still created user, just couldn't email
+    return NextResponse.json({
+      success: true,
+      message: `Account created for ${email}. Temp password: ${tempPassword} (email not sent — configure SMTP_PASS)`,
+      userId: userData.user.id,
+      tempPassword,
+      demo: true,
+    });
   } catch (err) {
     console.error('Invite error:', err);
     return NextResponse.json({ error: err.message || 'Failed to send invite' }, { status: 500 });
@@ -58,7 +99,8 @@ function generatePassword() {
 
 function buildInviteEmail({ name, email, role, pitch, siteUrl, siteName, tempPassword }) {
   const displayName = name || email.split('@')[0];
-  const roleLabel = role === 'admin' ? 'Site Manager' : 'Customer';
+  const roleLabels = { super_admin: 'Super Admin', admin: 'Site Manager', developer: 'Developer', accounts: 'Accounts', customer: 'Customer' };
+  const roleLabel = roleLabels[role] || 'Team Member';
   const loginUrl = `${siteUrl}/login`;
 
   return `
@@ -94,17 +136,17 @@ function buildInviteEmail({ name, email, role, pitch, siteUrl, siteName, tempPas
 
         <div style="text-align: center; margin: 24px 0;">
           <a href="${loginUrl}" style="display: inline-block; background: #059669; color: white; padding: 14px 32px; border-radius: 12px; text-decoration: none; font-size: 16px; font-weight: 700;">
-            Open ParkManagerAI
+            Open ${siteName}
           </a>
         </div>
 
         <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 16px; margin-top: 24px;">
           <p style="margin: 0; color: #065f46; font-size: 13px; font-weight: 600;">Install as an App</p>
           <p style="margin: 6px 0 0; color: #047857; font-size: 13px; line-height: 1.5;">
-            For the best experience, install ParkManagerAI on your phone:
+            For the best experience, install on your phone:
           </p>
           <ul style="margin: 8px 0 0; padding-left: 20px; color: #047857; font-size: 13px; line-height: 1.8;">
-            <li><strong>Android:</strong> Open the link in Chrome, tap "Install App" when prompted</li>
+            <li><strong>Android:</strong> Open in Chrome, tap "Install App"</li>
             <li><strong>iPhone:</strong> Open in Safari, tap Share, then "Add to Home Screen"</li>
           </ul>
         </div>

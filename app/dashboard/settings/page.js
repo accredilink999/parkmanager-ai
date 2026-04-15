@@ -22,6 +22,15 @@ export default function SettingsPage() {
   const [toast, setToast] = useState('');
   const fileInputRef = useRef(null);
 
+  // Team / Invite
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteRole, setInviteRole] = useState('customer');
+  const [invitePitch, setInvitePitch] = useState('');
+  const [inviting, setInviting] = useState(false);
+
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
@@ -29,6 +38,7 @@ export default function SettingsPage() {
     if (!['super_admin', 'developer'].includes(u.role)) { router.push('/dashboard'); return; }
     setUser(u);
     loadSettings();
+    loadTeam();
   }, [router]);
 
   function applySettings(entries) {
@@ -62,21 +72,16 @@ export default function SettingsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate: images only, max 500KB
+    // Validate: images only (no size limit — we compress below)
     if (!file.type.startsWith('image/')) {
       setToast('Please select an image file (PNG, JPG, SVG)');
-      setTimeout(() => setToast(''), 3000);
-      return;
-    }
-    if (file.size > 500 * 1024) {
-      setToast('Logo must be under 500KB');
       setTimeout(() => setToast(''), 3000);
       return;
     }
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      // Resize to max 200px wide for storage efficiency
+      // Resize to max 200px wide and compress as JPEG for phone photos
       const img = new Image();
       img.onload = () => {
         const maxW = 200;
@@ -86,7 +91,12 @@ export default function SettingsPage() {
         canvas.height = Math.round(img.height * scale);
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/png', 0.9);
+        // Use JPEG at 0.8 quality for smaller output (phone photos can be huge)
+        let dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        // If still too big for DB storage, reduce quality further
+        if (dataUrl.length > 200 * 1024) {
+          dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+        }
         setSiteLogo(dataUrl);
         setToast('Logo uploaded — click Save to apply');
         setTimeout(() => setToast(''), 3000);
@@ -101,6 +111,52 @@ export default function SettingsPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
     setToast('Logo removed — click Save to apply');
     setTimeout(() => setToast(''), 3000);
+  }
+
+  async function loadTeam() {
+    if (!supabase) return;
+    const orgId = getOrgId();
+    if (!orgId) return;
+    const { data } = await supabase.from('profiles').select('id, email, full_name, role').eq('org_id', orgId).order('created_at');
+    setTeamMembers(data || []);
+  }
+
+  async function sendInvite() {
+    if (!inviteEmail) return;
+    setInviting(true);
+    try {
+      const res = await fetch('/api/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: inviteEmail,
+          name: inviteName,
+          role: inviteRole,
+          pitch: invitePitch,
+          orgId: getOrgId(),
+          orgName: siteName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setToast(data.message);
+      setShowInvite(false);
+      setInviteEmail(''); setInviteName(''); setInviteRole('customer'); setInvitePitch('');
+      loadTeam();
+    } catch (err) {
+      setToast('Error: ' + err.message);
+    }
+    setInviting(false);
+    setTimeout(() => setToast(''), 5000);
+  }
+
+  async function removeTeamMember(member) {
+    if (!confirm(`Remove ${member.full_name || member.email} from this park?`)) return;
+    // Just remove from org — don't delete their auth account
+    await supabase.from('profiles').update({ org_id: null }).eq('id', member.id);
+    setToast(`${member.full_name || member.email} removed`);
+    setTimeout(() => setToast(''), 3000);
+    loadTeam();
   }
 
   async function saveSettings() {
@@ -203,7 +259,7 @@ export default function SettingsPage() {
                     </button>
                   )}
                 </div>
-                <p className="text-xs text-slate-400 mt-1.5">PNG, JPG or SVG. Max 500KB. Will be resized to 200px wide.</p>
+                <p className="text-xs text-slate-400 mt-1.5">PNG, JPG or SVG. Any size — auto-compressed to fit.</p>
               </div>
             </div>
           </div>
@@ -302,6 +358,93 @@ export default function SettingsPage() {
           <button onClick={saveSettings} disabled={saving} className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 transition-colors disabled:opacity-50">
             {saving ? 'Saving...' : 'Save All Settings'}
           </button>
+        </div>
+
+        {/* Team Members */}
+        <div className="bg-white rounded-xl border p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Team</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Invite staff, developers, or customers to this park.</p>
+            </div>
+            <button onClick={() => setShowInvite(!showInvite)}
+              className="px-3 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-500 transition-colors">
+              + Invite
+            </button>
+          </div>
+
+          {/* Invite form */}
+          {showInvite && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Email *</label>
+                  <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
+                    className={inputClass} placeholder="staff@example.com" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Full Name</label>
+                  <input value={inviteName} onChange={e => setInviteName(e.target.value)}
+                    className={inputClass} placeholder="Jane Smith" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Role</label>
+                  <select value={inviteRole} onChange={e => setInviteRole(e.target.value)} className={inputClass}>
+                    <option value="customer">Customer</option>
+                    <option value="admin">Site Manager</option>
+                    <option value="accounts">Accounts</option>
+                    <option value="developer">Developer</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Pitch (optional)</label>
+                  <input value={invitePitch} onChange={e => setInvitePitch(e.target.value)}
+                    className={inputClass} placeholder="e.g. A1" />
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => { setShowInvite(false); setInviteEmail(''); setInviteName(''); setInviteRole('customer'); setInvitePitch(''); }}
+                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm">Cancel</button>
+                <button onClick={sendInvite} disabled={!inviteEmail || inviting}
+                  className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                  {inviting ? 'Sending...' : 'Send Invite'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Team list */}
+          {teamMembers.length > 0 ? (
+            <div className="divide-y divide-slate-100">
+              {teamMembers.map(m => {
+                const roleLabels = { super_admin: 'Super Admin', admin: 'Site Manager', developer: 'Developer', accounts: 'Accounts', customer: 'Customer' };
+                const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', developer: 'bg-amber-100 text-amber-700', accounts: 'bg-teal-100 text-teal-700', customer: 'bg-slate-100 text-slate-600' };
+                return (
+                  <div key={m.id} className="flex items-center justify-between py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-sm font-bold">
+                        {(m.full_name || m.email || '?')[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{m.full_name || m.email}</p>
+                        <p className="text-xs text-slate-400">{m.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleColors[m.role] || roleColors.customer}`}>
+                        {roleLabels[m.role] || m.role}
+                      </span>
+                      {m.id !== user?.id && m.role !== 'super_admin' && (
+                        <button onClick={() => removeTeamMember(m)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400 text-center py-4">No team members yet. Invite someone above.</p>
+          )}
         </div>
 
         {/* Account */}
