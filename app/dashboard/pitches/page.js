@@ -71,6 +71,7 @@ export default function PitchesPage() {
     setPitchNumber(p.pitch_number); setCustomerName(p.customer_name || '');
     setCustomerEmail(p.customer_email || ''); setCustomerPhone(p.customer_phone || ''); setMeterId(p.meter_id || '');
     setStatus(p.status); setEditing(p); setShowForm(true);
+    setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50);
   }
 
   async function savePitch() {
