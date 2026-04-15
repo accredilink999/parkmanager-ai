@@ -64,7 +64,7 @@ export default function OutstandingBillsPage() {
     }
 
     const [pRes, bRes, sRes] = await Promise.all([
-      supabase.from('pitches').select('*').order('pitch_number'),
+      supabase.from('pitches').select('*').order('created_at'),
       supabase.from('bills').select('*, pitches(pitch_number, customer_name, customer_email, customer_phone)').eq('status', 'unpaid').order('created_at', { ascending: false }),
       supabase.from('site_settings').select('*'),
     ]);

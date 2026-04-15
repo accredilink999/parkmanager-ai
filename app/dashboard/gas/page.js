@@ -76,7 +76,7 @@ function GasContent() {
 
     // Load pitches
     if (supabase) {
-      const { data } = await supabase.from('pitches').select('*').order('pitch_number');
+      const { data } = await supabase.from('pitches').select('*').order('created_at');
       setPitches(data || []);
     } else {
       setPitches([
@@ -200,7 +200,11 @@ function GasContent() {
 
     if (supabase) {
       const { collar_number, size, type, supplier, status } = cyl;
-      await supabase.from('gas_cylinders').insert({ collar_number, size, type, supplier, status, org_id: getOrgId() });
+      const { data: inserted } = await supabase.from('gas_cylinders').insert({ collar_number, size, type, supplier, status, org_id: getOrgId() }).select('id').single();
+      // Log to gas_logs
+      if (inserted) {
+        await supabase.from('gas_logs').insert({ cylinder_id: inserted.id, collar_number, action: 'added', notes: `${size} ${type}${supplier ? ' from ' + supplier : ''}`, org_id: getOrgId() });
+      }
       loadData();
     } else {
       saveCylinders([cyl, ...cylinders]);
@@ -255,6 +259,15 @@ function GasContent() {
         customer_name: pitch?.customer_name || null,
         updated_at: new Date().toISOString(),
       }).eq('id', scanOutCylinder.id);
+      // Log to gas_logs
+      await supabase.from('gas_logs').insert({
+        cylinder_id: scanOutCylinder.id, collar_number: scanOutCylinder.collar_number,
+        action: scanOutType === 'offsite' ? 'sent_offsite' : 'given_to_customer',
+        pitch_id: scanOutType === 'customer' ? scanOutPitch : null,
+        pitch_number: pitch?.pitch_number || null,
+        customer_name: pitch?.customer_name || null,
+        org_id: getOrgId(),
+      });
       loadData();
     } else {
       saveCylinders(updated);
@@ -290,6 +303,14 @@ function GasContent() {
         customer_name: null,
         updated_at: new Date().toISOString(),
       }).eq('id', cyl.id);
+      // Log to gas_logs
+      await supabase.from('gas_logs').insert({
+        cylinder_id: cyl.id, collar_number: cyl.collar_number,
+        action: 'returned_to_site',
+        pitch_number: cyl.pitch_number || null,
+        customer_name: cyl.customer_name || null,
+        org_id: getOrgId(),
+      });
       loadData();
     } else {
       saveCylinders(updated);

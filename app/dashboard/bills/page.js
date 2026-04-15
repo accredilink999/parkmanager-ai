@@ -79,7 +79,7 @@ export default function BillsPage() {
     }
 
     const [pitchRes, billRes, settingsRes] = await Promise.all([
-      supabase.from('pitches').select('*').order('pitch_number'),
+      supabase.from('pitches').select('*').order('created_at'),
       supabase.from('bills').select('*, pitches(pitch_number, customer_name, customer_email)').order('created_at', { ascending: false }),
       supabase.from('site_settings').select('*'),
     ]);

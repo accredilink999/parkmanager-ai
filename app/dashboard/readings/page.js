@@ -45,6 +45,7 @@ function ReadingsContent() {
   // ---- Reading Session ----
   const [session, setSession] = useState(null); // { id, started_at, readings: { [pitchId]: { reading, usage_kwh, previous_reading, read_at } }, status: 'active'|'complete' }
   const [sessionPitchIndex, setSessionPitchIndex] = useState(0);
+  const sessionPitchIdRef = useRef(null); // Track pitch ID to prevent index mismatch bugs
   const [pastSessions, setPastSessions] = useState([]);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportSession, setExportSession] = useState(null);
@@ -303,7 +304,7 @@ function ReadingsContent() {
 
     try {
       const [pitchRes, readingRes, settingsRes] = await Promise.all([
-        supabase.from('pitches').select('*').order('pitch_number'),
+        supabase.from('pitches').select('*').order('created_at'),
         supabase.from('meter_readings').select('*, pitches(pitch_number, customer_name)').order('read_at', { ascending: false }).limit(50),
         supabase.from('site_settings').select('*'),
       ]);
@@ -356,7 +357,7 @@ function ReadingsContent() {
           const active = all.find(s => s.status === 'active');
           if (active) {
             setSession(active);
-            setSessionPitchIndex(0);
+            goToSessionIndex(0);
             setTab('session');
           }
         }
@@ -399,7 +400,7 @@ function ReadingsContent() {
       const active = sessionsWithReadings.find(s => s.status === 'active');
       if (active) {
         setSession(active);
-        setSessionPitchIndex(0);
+        goToSessionIndex(0);
         setTab('session');
       }
     } catch (err) {
@@ -411,7 +412,7 @@ function ReadingsContent() {
         const active = cached.data.find(s => s.status === 'active');
         if (active) {
           setSession(active);
-          setSessionPitchIndex(0);
+          goToSessionIndex(0);
           setTab('session');
         }
       }
@@ -427,6 +428,12 @@ function ReadingsContent() {
   function pitchesForSession() {
     // Session covers all pitches — meter_id is optional
     return pitches;
+  }
+
+  function goToSessionIndex(idx) {
+    setSessionPitchIndex(idx);
+    const sPitches = pitchesForSession();
+    if (sPitches[idx]) sessionPitchIdRef.current = sPitches[idx].id;
   }
 
   // ---- Save / Update reading ----
@@ -691,7 +698,7 @@ function ReadingsContent() {
         name: sessionName,
       };
       setSession(newSession);
-      setSessionPitchIndex(0);
+      goToSessionIndex(0);
       setNewReading('');
       setCapturedImage(null);
       setOcrConfidence(null);
@@ -731,7 +738,7 @@ function ReadingsContent() {
       setTimeout(() => setToast(''), 4000);
     }
     setSession(newSession);
-    setSessionPitchIndex(0);
+    goToSessionIndex(0);
     setNewReading('');
     setCapturedImage(null);
     setOcrConfidence(null);
@@ -923,10 +930,10 @@ function ReadingsContent() {
       setTimeout(() => setToast(''), 4000);
     } else {
       const nextIdx = sPitches.findIndex((p, i) => i > sessionPitchIndex && !updatedSession.readings[p.id]);
-      if (nextIdx >= 0) setSessionPitchIndex(nextIdx);
+      if (nextIdx >= 0) goToSessionIndex(nextIdx);
       else {
         const wrap = sPitches.findIndex(p => !updatedSession.readings[p.id]);
-        if (wrap >= 0) setSessionPitchIndex(wrap);
+        if (wrap >= 0) goToSessionIndex(wrap);
       }
     }
   }
@@ -960,7 +967,7 @@ function ReadingsContent() {
     setSession(sess);
     const sPitches = pitchesForSession(sess);
     const idx = sPitches.findIndex(p => !sess.readings[p.id]);
-    setSessionPitchIndex(idx >= 0 ? idx : 0);
+    goToSessionIndex(idx >= 0 ? idx : 0);
     setNewReading('');
     setCapturedImage(null);
     setOcrConfidence(null);
@@ -1009,7 +1016,12 @@ function ReadingsContent() {
     setSaving(true);
 
     const sPitches = pitchesForSession();
-    const pitch = sPitches[sessionPitchIndex];
+    // Use ref pitch ID for safety — prevents saving to wrong pitch if index drifts
+    let pitch = sPitches[sessionPitchIndex];
+    if (sessionPitchIdRef.current) {
+      const refPitch = sPitches.find(p => p.id === sessionPitchIdRef.current);
+      if (refPitch) pitch = refPitch;
+    }
     if (!pitch) { setSaving(false); return; }
 
     // Duplicate check — another device may have already read this pitch
@@ -1018,7 +1030,7 @@ function ReadingsContent() {
       setTimeout(() => setToast(''), 3000);
       setSaving(false);
       const nextIdx = sPitches.findIndex((p, i) => i > sessionPitchIndex && !session.readings[p.id]);
-      if (nextIdx >= 0) setSessionPitchIndex(nextIdx);
+      if (nextIdx >= 0) goToSessionIndex(nextIdx);
       return;
     }
 
@@ -1147,7 +1159,7 @@ function ReadingsContent() {
       if (nextIdx >= totalPitches) {
         nextIdx = sPitches.findIndex(p => !updatedSession.readings[p.id]);
       }
-      if (nextIdx >= 0) setSessionPitchIndex(nextIdx);
+      if (nextIdx >= 0) goToSessionIndex(nextIdx);
     }
 
     setSaving(false);
@@ -1159,7 +1171,7 @@ function ReadingsContent() {
     const sPitches = pitchesForSession();
     let nextIdx = sessionPitchIndex + 1;
     if (nextIdx >= sPitches.length) nextIdx = 0;
-    setSessionPitchIndex(nextIdx);
+    goToSessionIndex(nextIdx);
     setNewReading('');
     setCapturedImage(null);
     setOcrConfidence(null);
@@ -1167,6 +1179,8 @@ function ReadingsContent() {
 
   function sessionGoToPitch(idx) {
     setSessionPitchIndex(idx);
+    const sPitches = pitchesForSession();
+    if (sPitches[idx]) sessionPitchIdRef.current = sPitches[idx].id;
     setNewReading('');
     setCapturedImage(null);
     setOcrConfidence(null);
@@ -1853,9 +1867,9 @@ function ReadingsContent() {
                     <tr>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Pitch</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Customer</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Reading</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Previous</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Usage (kWh)</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Last Reading</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Current Reading</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Period kWh</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Cost</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 hidden sm:table-cell">Date</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500">Actions</th>
@@ -1866,8 +1880,8 @@ function ReadingsContent() {
                       <tr key={r.id} className="hover:bg-slate-50">
                         <td className="px-4 py-3 text-sm font-semibold text-slate-900">{r.pitch?.pitch_number || '—'}</td>
                         <td className="px-4 py-3 text-sm text-slate-600">{r.pitch?.customer_name || '—'}</td>
-                        <td className="px-4 py-3 text-sm text-right font-mono">{Number(r.reading).toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-right font-mono text-slate-400">{Number(r.previous_reading).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{Number(r.reading).toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-right font-bold text-emerald-600">{Number(r.usage_kwh).toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-right font-bold text-blue-600">&pound;{(Number(r.usage_kwh || 0) * unitRate).toFixed(2)}</td>
                         <td className="px-4 py-3 text-xs text-right text-slate-400 hidden sm:table-cell">{r.read_at ? new Date(r.read_at).toLocaleDateString() : '—'}</td>

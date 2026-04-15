@@ -57,7 +57,7 @@ export default function PitchesPage() {
       setLoading(false);
       return;
     }
-    const { data } = await supabase.from('pitches').select('*').order('pitch_number');
+    const { data } = await supabase.from('pitches').select('*').order('created_at');
     setPitches(data || []);
     setLoading(false);
   }

@@ -83,7 +83,7 @@ function ReadingReportsContent() {
       return;
     }
     const [pRes, rRes, sRes] = await Promise.all([
-      supabase.from('pitches').select('*').order('pitch_number'),
+      supabase.from('pitches').select('*').order('created_at'),
       supabase.from('meter_readings').select('*').order('read_at', { ascending: false }),
       supabase.from('site_settings').select('*'),
     ]);
