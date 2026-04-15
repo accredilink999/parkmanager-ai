@@ -54,6 +54,11 @@ function ReadingsContent() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportSession, setExportSession] = useState(null);
 
+  // Baseline mode — first-time setup for pitches with no previous readings
+  const [showBaseline, setShowBaseline] = useState(false);
+  const [baselineReadings, setBaselineReadings] = useState({}); // { pitchId: readingValue }
+  const [savingBaseline, setSavingBaseline] = useState(false);
+
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
@@ -415,7 +420,26 @@ function ReadingsContent() {
   }
 
   // ---- Session functions ----
+  function hasIncompleteSession() {
+    return pastSessions.some(s => s.status === 'active');
+  }
+
+  function getIncompleteSession() {
+    return pastSessions.find(s => s.status === 'active');
+  }
+
   function startNewSession() {
+    // Block if there's an incomplete session
+    const incomplete = getIncompleteSession();
+    if (incomplete) {
+      const sPitchCount = pitches.filter(p => p.meter_id).length;
+      const sReadCount = Object.keys(incomplete.readings).length;
+      setToast(`Complete the current session first (${sReadCount}/${sPitchCount} done). Resuming...`);
+      setTimeout(() => setToast(''), 4000);
+      resumeSession(incomplete);
+      return;
+    }
+
     const newSession = {
       id: 'ses_' + Date.now(),
       started_at: new Date().toISOString(),
@@ -434,6 +458,39 @@ function ReadingsContent() {
     const all = [...pastSessions.filter(s => s.id !== newSession.id), newSession];
     saveSessions(all);
     setToast('Reading session started');
+    setTimeout(() => setToast(''), 3000);
+  }
+
+  // ---- Baseline readings (first-time setup) ----
+  async function saveBaselineReadings() {
+    const entries = Object.entries(baselineReadings).filter(([, v]) => v && String(v).trim());
+    if (entries.length === 0) return;
+    setSavingBaseline(true);
+
+    for (const [pitchId, readingVal] of entries) {
+      const val = parseFloat(readingVal);
+      if (isNaN(val)) continue;
+      const payload = { pitch_id: pitchId, reading: val, previous_reading: 0, usage_kwh: 0 };
+
+      if (supabase) {
+        await supabase.from('meter_readings').insert(payload);
+      } else {
+        const pitch = pitches.find(p => p.id === pitchId);
+        const newR = {
+          id: String(Date.now()) + pitchId,
+          ...payload,
+          read_at: new Date().toISOString(),
+          pitch: { pitch_number: pitch?.pitch_number, customer_name: pitch?.customer_name },
+        };
+        setReadings(prev => [newR, ...prev]);
+      }
+    }
+
+    setSavingBaseline(false);
+    setShowBaseline(false);
+    setBaselineReadings({});
+    loadData();
+    setToast(`Baseline readings saved for ${entries.length} pitches`);
     setTimeout(() => setToast(''), 3000);
   }
 
@@ -1105,22 +1162,94 @@ function ReadingsContent() {
             {/* No active session */}
             {!session || session.status === 'complete' ? (
               <div className="space-y-4">
-                {/* Start new session */}
-                <div className="bg-white rounded-xl border p-6 text-center">
-                  <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                    </svg>
+                {/* Incomplete session warning — must finish before starting new */}
+                {hasIncompleteSession() && (() => {
+                  const inc = getIncompleteSession();
+                  const sPitchCount = pitches.filter(p => p.meter_id).length;
+                  const sReadCount = Object.keys(inc.readings).length;
+                  const remaining = sPitchCount - sReadCount;
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <div className="flex items-start gap-3">
+                        <svg className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-amber-800">Incomplete Session — {remaining} meter{remaining !== 1 ? 's' : ''} remaining</p>
+                          <p className="text-xs text-amber-600 mt-0.5">{inc.name} — {sReadCount}/{sPitchCount} readings done. All pitches must be read before starting a new session.</p>
+                          <button onClick={() => resumeSession(inc)} className="mt-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-500">
+                            Resume Session
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Baseline readings — first-time setup */}
+                {!showBaseline ? (
+                  <div className="bg-white rounded-xl border p-6 text-center">
+                    <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                      </svg>
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900 mb-1">Meter Reading Session</h3>
+                    <p className="text-sm text-slate-500 mb-4">
+                      Walk around the park and record every meter in one session.<br />
+                      {pitches.filter(p => p.meter_id).length} meters to read. Saves progress automatically.
+                    </p>
+                    <div className="flex flex-col items-center gap-2">
+                      <button onClick={startNewSession} disabled={hasIncompleteSession()} className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        Start New Session
+                      </button>
+                      {readings.length === 0 && pitches.filter(p => p.meter_id).length > 0 && (
+                        <button onClick={() => setShowBaseline(true)} className="px-4 py-2 text-teal-600 text-xs font-medium hover:text-teal-800">
+                          First time? Set baseline meter readings &rarr;
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <h3 className="text-base font-bold text-slate-900 mb-1">Meter Reading Session</h3>
-                  <p className="text-sm text-slate-500 mb-4">
-                    Walk around the park and record every meter in one session.<br />
-                    {pitches.filter(p => p.meter_id).length} meters to read. Saves progress automatically.
-                  </p>
-                  <button onClick={startNewSession} className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 transition-colors">
-                    Start New Session
-                  </button>
-                </div>
+                ) : (
+                  /* Baseline entry form */
+                  <div className="bg-white rounded-xl border p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">Set Baseline Meter Readings</h3>
+                        <p className="text-xs text-slate-400">Enter the current reading on each meter so usage can be calculated from your next session.</p>
+                      </div>
+                      <button onClick={() => { setShowBaseline(false); setBaselineReadings({}); }} className="text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+                    </div>
+                    <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+                      {pitches.filter(p => p.meter_id).map(p => (
+                        <div key={p.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+                          <div className="w-10 h-10 bg-teal-600 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0">{p.pitch_number}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-800 truncate">{p.customer_name || 'Vacant'}</p>
+                            <p className="text-xs text-slate-400">Meter: {p.meter_id}</p>
+                          </div>
+                          <input
+                            type="number"
+                            value={baselineReadings[p.id] || ''}
+                            onChange={e => setBaselineReadings(prev => ({ ...prev, [p.id]: e.target.value }))}
+                            className="w-28 px-2 py-1.5 border border-slate-200 rounded-lg text-sm font-mono text-right focus:outline-none focus:ring-2 focus:ring-teal-500"
+                            placeholder="e.g. 15234"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      <button onClick={() => { setShowBaseline(false); setBaselineReadings({}); }} className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm">Cancel</button>
+                      <button
+                        onClick={saveBaselineReadings}
+                        disabled={savingBaseline || Object.values(baselineReadings).filter(v => v && String(v).trim()).length === 0}
+                        className="flex-1 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-teal-500"
+                      >
+                        {savingBaseline ? 'Saving...' : `Save ${Object.values(baselineReadings).filter(v => v && String(v).trim()).length} Baselines`}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Past sessions */}
                 {pastSessions.length > 0 && (
@@ -1139,7 +1268,9 @@ function ReadingsContent() {
                               <p className="text-sm font-medium text-slate-800">{s.name}</p>
                               <p className="text-xs text-slate-400">
                                 {sReadCount}/{sPitchCount} readings ({sPercent}%) —
-                                {s.status === 'complete' ? ' Completed' : ' In Progress'}
+                                {s.status === 'complete' ? ' Completed' : (
+                                  <span className="text-amber-600 font-medium"> In Progress — {sPitchCount - sReadCount} remaining</span>
+                                )}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1248,6 +1379,22 @@ function ReadingsContent() {
                         </p>
                       </div>
                     )}
+
+                    {/* Last reading info (for pitches not yet done) */}
+                    {!currentPitchDone && (() => {
+                      const prevR = readings.find(r => r.pitch_id === currentSessionPitch.id);
+                      return prevR ? (
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-3 flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Last reading:</span>
+                          <span className="text-sm font-mono font-medium text-slate-700">{Number(prevR.reading).toLocaleString()} kWh</span>
+                          <span className="text-xs text-slate-400">{prevR.read_at ? new Date(prevR.read_at).toLocaleDateString('en-GB') : ''}</span>
+                        </div>
+                      ) : (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3 text-center">
+                          <p className="text-xs text-amber-700">No previous reading — this will be the baseline for this pitch</p>
+                        </div>
+                      );
+                    })()}
 
                     {/* Camera button */}
                     {!currentPitchDone && (
