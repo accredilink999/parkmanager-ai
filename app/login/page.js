@@ -23,19 +23,31 @@ export default function LoginPage() {
     if (!showQr || qrDataUrl) return;
     (async () => {
       try {
-        const QRCode = (await import('qrcode')).default;
-        const url = typeof window !== 'undefined' ? window.location.href : 'https://parkmanager-ai.vercel.app/login';
-        const dataUrl = await QRCode.toDataURL(url, {
+        const mod = await import('qrcode');
+        const QRCode = mod.default || mod;
+        const loginUrl = window.location.origin + '/login';
+        const dataUrl = await QRCode.toDataURL(loginUrl, {
           width: 280,
           margin: 2,
           color: { dark: '#0f172a', light: '#ffffff' },
+          errorCorrectionLevel: 'M',
         });
         setQrDataUrl(dataUrl);
       } catch (err) {
         console.error('QR generation failed:', err);
+        // Fallback: use a canvas-based simple approach
+        try {
+          const mod2 = await import('qrcode');
+          const canvas = document.createElement('canvas');
+          const loginUrl = window.location.origin + '/login';
+          await (mod2.default || mod2).toCanvas(canvas, loginUrl, { width: 280, margin: 2 });
+          setQrDataUrl(canvas.toDataURL());
+        } catch (err2) {
+          console.error('QR canvas fallback also failed:', err2);
+        }
       }
     })();
-  }, [showQr]);
+  }, [showQr, qrDataUrl]);
 
   function copyLoginLink() {
     const url = typeof window !== 'undefined' ? window.location.href : 'https://parkmanager-ai.vercel.app/login';
