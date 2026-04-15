@@ -1,7 +1,8 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import QRCode from 'react-qr-code';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
@@ -15,29 +16,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [showQr, setShowQr] = useState(false);
-  const [qrReady, setQrReady] = useState(false);
   const [copied, setCopied] = useState(false);
-  const qrCanvasRef = useRef(null);
-
-  // Render QR code directly to canvas element
-  useEffect(() => {
-    if (!showQr || !qrCanvasRef.current) return;
-    setQrReady(false);
-    const loginUrl = window.location.origin + '/login';
-
-    import('qrcode').then(mod => {
-      const QRCode = mod.default || mod;
-      QRCode.toCanvas(qrCanvasRef.current, loginUrl, {
-        width: 240,
-        margin: 2,
-        color: { dark: '#0f172a', light: '#ffffff' },
-        errorCorrectionLevel: 'M',
-      }, (err) => {
-        if (err) console.error('QR render error:', err);
-        else setQrReady(true);
-      });
-    }).catch(err => console.error('QR import error:', err));
-  }, [showQr]);
 
   function copyLoginLink() {
     const url = typeof window !== 'undefined' ? window.location.href : 'https://parkmanager-ai.vercel.app/login';
@@ -322,13 +301,14 @@ export default function LoginPage() {
             <div className="mt-4 bg-white rounded-2xl shadow-2xl p-6 inline-block">
               <p className="text-sm font-semibold text-slate-800 mb-1">Scan to open login page</p>
               <p className="text-xs text-slate-400 mb-4">Share this with staff or customers to access the app</p>
-              <div className="mx-auto flex items-center justify-center">
-                <canvas ref={qrCanvasRef} className={`rounded-xl ${qrReady ? '' : 'hidden'}`} />
-                {!qrReady && (
-                  <div className="w-56 h-56 flex items-center justify-center bg-slate-50 rounded-xl">
-                    <div className="animate-spin w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full" />
-                  </div>
-                )}
+              <div className="mx-auto flex items-center justify-center p-4 bg-white rounded-xl">
+                <QRCode
+                  value="https://parkmanager-ai.vercel.app/login"
+                  size={220}
+                  level="M"
+                  fgColor="#0f172a"
+                  bgColor="#ffffff"
+                />
               </div>
               <div className="flex items-center gap-2 mt-4 justify-center">
                 <button
