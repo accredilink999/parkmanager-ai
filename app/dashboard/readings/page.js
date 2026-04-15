@@ -1203,9 +1203,9 @@ function ReadingsContent() {
                       <button onClick={startNewSession} disabled={hasIncompleteSession()} className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         Start New Session
                       </button>
-                      {readings.length === 0 && pitches.filter(p => p.meter_id).length > 0 && (
+                      {pitches.filter(p => p.meter_id).length > 0 && (
                         <button onClick={() => setShowBaseline(true)} className="px-4 py-2 text-teal-600 text-xs font-medium hover:text-teal-800">
-                          First time? Set baseline meter readings &rarr;
+                          Set baseline meter readings &rarr;
                         </button>
                       )}
                     </div>
@@ -1221,22 +1221,26 @@ function ReadingsContent() {
                       <button onClick={() => { setShowBaseline(false); setBaselineReadings({}); }} className="text-xs text-slate-400 hover:text-slate-600">Cancel</button>
                     </div>
                     <div className="space-y-2 max-h-[50vh] overflow-y-auto">
-                      {pitches.filter(p => p.meter_id).map(p => (
+                      {pitches.filter(p => p.meter_id).map(p => {
+                        const lastReading = readings.find(r => r.pitch_id === p.id || r.pitch?.id === p.id);
+                        return (
                         <div key={p.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-                          <div className="w-10 h-10 bg-teal-600 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0">{p.pitch_number}</div>
+                          <div className={`w-10 h-10 ${lastReading ? 'bg-slate-300' : 'bg-teal-600'} rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}>{p.pitch_number}</div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-slate-800 truncate">{p.customer_name || 'Vacant'}</p>
                             <p className="text-xs text-slate-400">Meter: {p.meter_id}</p>
+                            {lastReading && <p className="text-xs text-emerald-600">Has reading: {Number(lastReading.reading).toLocaleString()}</p>}
                           </div>
                           <input
                             type="number"
                             value={baselineReadings[p.id] || ''}
                             onChange={e => setBaselineReadings(prev => ({ ...prev, [p.id]: e.target.value }))}
                             className="w-28 px-2 py-1.5 border border-slate-200 rounded-lg text-sm font-mono text-right focus:outline-none focus:ring-2 focus:ring-teal-500"
-                            placeholder="e.g. 15234"
+                            placeholder={lastReading ? 'Override' : 'e.g. 15234'}
                           />
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     <div className="flex gap-2 mt-4">
                       <button onClick={() => { setShowBaseline(false); setBaselineReadings({}); }} className="flex-1 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm">Cancel</button>
