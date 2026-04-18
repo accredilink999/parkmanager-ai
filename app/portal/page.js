@@ -265,6 +265,20 @@ export default function CustomerPortal() {
 
       {/* Content */}
       <div className="max-w-lg mx-auto px-4 mt-3">
+        {/* Emergency button on every page */}
+        {sitePhone && !loading && pitch && (
+          <a href={`tel:${sitePhone.replace(/\s/g, '')}`}
+            className="flex items-center gap-3 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl px-4 py-3 mb-3 transition-colors">
+            <svg className="w-6 h-6 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <div>
+              <p className="text-sm font-bold">Emergency — I Need Help</p>
+              <p className="text-[11px] text-white/70">Press for on-site emergency assistance</p>
+            </div>
+          </a>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full" />
