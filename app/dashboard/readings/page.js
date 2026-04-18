@@ -2036,19 +2036,23 @@ function ReadingsContent() {
                       <button onClick={() => { setExportSession(session); setShowExportModal(true); }} className="px-3 py-1.5 bg-teal-100 text-teal-700 rounded-lg text-xs font-medium hover:bg-teal-200">
                         Export
                       </button>
-                      {session._editing && sessionCompleted >= sessionTotal && (
+                      {session._editing && (
                         <button onClick={() => {
                           const completed = { ...session, status: 'complete', completed_at: new Date().toISOString(), _editing: false };
                           updateSession(completed);
-                          setToast('Session marked complete');
+                          setSession(null);
+                          setTab('session');
+                          setToast('Session saved and marked complete');
                           setTimeout(() => setToast(''), 3000);
                         }} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500">
                           Save & Complete
                         </button>
                       )}
-                      <button onClick={pauseSession} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-200">
-                        {session._editing ? 'Done Editing' : 'Pause'}
-                      </button>
+                      {!session._editing && (
+                        <button onClick={pauseSession} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-200">
+                          Pause
+                        </button>
+                      )}
                       <button onClick={() => cancelSession(session.id)} className="px-3 py-1.5 bg-red-100 text-red-600 rounded-lg text-xs font-medium hover:bg-red-200">
                         Cancel
                       </button>
