@@ -8,6 +8,7 @@ export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [stats, setStats] = useState({ pitches: 0, outstanding: 0, revenue: 0, readings: 0 });
+  const [pitchStats, setPitchStats] = useState({ total: 0, occupied: 0, vacant: 0 });
   const [loading, setLoading] = useState(true);
   const [siteName, setSiteName] = useState('ParkManagerAI');
   const [siteAddress, setSiteAddress] = useState('');
@@ -51,12 +52,14 @@ export default function Dashboard() {
   async function loadStats() {
     if (!supabase) {
       setStats({ pitches: 24, outstanding: 8, revenue: 1847.50, readings: 42 });
+      setPitchStats({ total: 24, occupied: 18, vacant: 6 });
       setLoading(false);
       return;
     }
     try {
-      const [pitchRes, billRes, readingRes] = await Promise.all([
+      const [pitchRes, pitchListRes, billRes, readingRes] = await Promise.all([
         supabase.from('pitches').select('id', { count: 'exact', head: true }),
+        supabase.from('pitches').select('status'),
         supabase.from('bills').select('amount_gbp, status'),
         supabase.from('meter_readings').select('id', { count: 'exact', head: true }),
       ]);
@@ -69,6 +72,10 @@ export default function Dashboard() {
         revenue,
         readings: readingRes.count || 0,
       });
+      const allPitches = pitchListRes.data || [];
+      const occupied = allPitches.filter(p => p.status === 'occupied').length;
+      const vacant = allPitches.filter(p => p.status !== 'occupied').length;
+      setPitchStats({ total: allPitches.length, occupied, vacant });
     } catch (err) {
       console.error('Stats error:', err);
     }
@@ -179,6 +186,22 @@ export default function Dashboard() {
       </header>
 
       <div className="max-w-7xl mx-auto p-4 space-y-6">
+        {/* Pitch Occupancy */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-emerald-600 rounded-2xl p-4 text-white text-center">
+            <p className="text-3xl font-bold">{loading ? '...' : pitchStats.occupied}</p>
+            <p className="text-sm font-medium text-emerald-100 mt-1">Occupied</p>
+          </div>
+          <div className="bg-slate-500 rounded-2xl p-4 text-white text-center">
+            <p className="text-3xl font-bold">{loading ? '...' : pitchStats.vacant}</p>
+            <p className="text-sm font-medium text-slate-200 mt-1">Vacant</p>
+          </div>
+          <div className="bg-blue-600 rounded-2xl p-4 text-white text-center">
+            <p className="text-3xl font-bold">{loading ? '...' : pitchStats.total}</p>
+            <p className="text-sm font-medium text-blue-100 mt-1">Total Pitches</p>
+          </div>
+        </div>
+
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
