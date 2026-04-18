@@ -104,6 +104,7 @@ function ReadingsContent() {
     (readingsData || []).forEach(r => {
       const isDormant = Number(r.reading) === 0 && Number(r.previous_reading) === 0 && Number(r.usage_kwh) === 0;
       map[r.pitch_id] = {
+        db_id: r.id, // DB primary key for reliable updates
         reading: r.reading,
         previous_reading: r.previous_reading,
         usage_kwh: r.usage_kwh,
@@ -1107,8 +1108,9 @@ function ReadingsContent() {
           return;
         }
 
-        const { error: insertErr } = await supabase.from('meter_readings').insert({ ...payload, org_id: getOrgId() });
+        const { data: inserted, error: insertErr } = await supabase.from('meter_readings').insert({ ...payload, org_id: getOrgId() }).select('id');
         if (insertErr) throw insertErr;
+        if (inserted && inserted[0]) payload._db_id = inserted[0].id;
       } catch (err) {
         // Queue for offline sync instead of failing
         addToOfflineQueue({ type: 'reading', payload, pitch_number: pitch.pitch_number });
@@ -1124,6 +1126,7 @@ function ReadingsContent() {
       readings: {
         ...session.readings,
         [pitch.id]: {
+          db_id: payload._db_id || null,
           reading: readingVal,
           previous_reading: prevReading,
           usage_kwh: usage,
@@ -1186,15 +1189,42 @@ function ReadingsContent() {
 
     if (supabase) {
       try {
-        const { error } = await supabase.from('meter_readings')
-          .update({ reading: newVal, usage_kwh: usage, updated_at: new Date().toISOString() })
-          .eq('session_id', session.id)
-          .eq('pitch_id', editingSessionPitchId);
+        // Use DB primary key if available (most reliable), fallback to session_id + pitch_id
+        let updateQuery;
+        if (cr?.db_id) {
+          updateQuery = supabase.from('meter_readings')
+            .update({ reading: newVal, usage_kwh: usage, updated_at: new Date().toISOString() })
+            .eq('id', cr.db_id)
+            .select();
+        } else {
+          updateQuery = supabase.from('meter_readings')
+            .update({ reading: newVal, usage_kwh: usage, updated_at: new Date().toISOString() })
+            .eq('session_id', session.id)
+            .eq('pitch_id', editingSessionPitchId)
+            .select();
+        }
+        const { data: updated, error } = await updateQuery;
         if (error) throw error;
+        if (!updated || updated.length === 0) {
+          // Fallback: find the reading by pitch_id in this session and update by its id
+          const { data: found } = await supabase.from('meter_readings')
+            .select('id')
+            .eq('session_id', session.id)
+            .eq('pitch_id', editingSessionPitchId)
+            .limit(1);
+          if (found && found.length > 0) {
+            const { error: err2 } = await supabase.from('meter_readings')
+              .update({ reading: newVal, usage_kwh: usage, updated_at: new Date().toISOString() })
+              .eq('id', found[0].id);
+            if (err2) throw err2;
+          } else {
+            throw new Error('Reading not found in database');
+          }
+        }
       } catch (err) {
         console.error('Update reading error:', err);
-        setToast('Failed to update reading — try again');
-        setTimeout(() => setToast(''), 3000);
+        setToast('Failed to update reading in database — ' + (err.message || 'try again'));
+        setTimeout(() => setToast(''), 4000);
         setSaving(false);
         return;
       }
@@ -1213,7 +1243,9 @@ function ReadingsContent() {
         },
       },
     };
-    updateSession(updatedSession);
+    setSession(updatedSession);
+    // Also update pastSessions so export picks up new values
+    setPastSessions(prev => prev.map(s => s.id === updatedSession.id ? updatedSession : s));
     setEditingSessionPitchId(null);
     setEditSessionValue('');
     setSaving(false);
