@@ -1891,9 +1891,10 @@ function ReadingsContent() {
                       <button onClick={startNewSession} disabled={hasIncompleteSession()} className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         Start New Session
                       </button>
-                      {pitches.length > 0 && (
+                      {/* Only show baseline option if no sessions have ever been completed */}
+                      {pitches.length > 0 && !pastSessions.some(s => s.status === 'complete') && pastSessions.length === 0 && (
                         <button onClick={() => setShowBaseline(true)} className="px-4 py-2 text-teal-600 text-xs font-medium hover:text-teal-800">
-                          Set baseline meter readings &rarr;
+                          Set baseline meter readings (first time only) &rarr;
                         </button>
                       )}
                     </div>
@@ -2193,7 +2194,7 @@ function ReadingsContent() {
                         </div>
                       ) : (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3 text-center">
-                          <p className="text-xs text-amber-700">No previous reading — this will be the baseline for this pitch</p>
+                          <p className="text-xs text-amber-700">No previous reading — this will be the baseline (first reading) for this pitch</p>
                         </div>
                       );
                     })()}
