@@ -5,6 +5,25 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { getOrgId } from '@/lib/org';
 
+/** Format meter reading: 5 digits before decimal, .XX after.
+ *  If the value already has decimal digits, keep them as-is (pad to 2 if only 1).
+ *  If no decimal, append .00 */
+function fmtReading(val) {
+  const num = parseFloat(val);
+  if (isNaN(num)) return String(val || '');
+  const str = String(val);
+  const dotIdx = str.indexOf('.');
+  let whole, dec;
+  if (dotIdx >= 0) {
+    whole = str.slice(0, dotIdx);
+    dec = str.slice(dotIdx + 1).slice(0, 2).padEnd(2, '0');
+  } else {
+    whole = String(Math.floor(num));
+    dec = '00';
+  }
+  return `${whole.padStart(5, '0')}.${dec}`;
+}
+
 export default function ReadingsPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full" /></div>}>
@@ -32,15 +51,9 @@ function ReadingsContent() {
   // Edit mode
   const [editingReading, setEditingReading] = useState(null);
 
-  // Camera / Snap-Photo OCR
-  const [showCamera, setShowCamera] = useState(false);
+  // Camera/OCR state (UI removed but state kept for cleanup references)
   const [capturedImage, setCapturedImage] = useState(null);
   const [ocrConfidence, setOcrConfidence] = useState(null);
-  const [ocrProcessing, setOcrProcessing] = useState(false);
-  const [photoPreview, setPhotoPreview] = useState(null); // data URL of captured photo before OCR result
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const workerRef = useRef(null);
 
   // ---- Reading Session ----
   const [session, setSession] = useState(null); // { id, started_at, readings: { [pitchId]: { reading, usage_kwh, previous_reading, read_at } }, status: 'active'|'complete' }
@@ -61,12 +74,20 @@ function ReadingsContent() {
   // Email sending state
   const [sendingEmail, setSendingEmail] = useState(null); // 'manager' | 'head_office' | null
 
+  // Edit session reading
+  const [editingSessionPitchId, setEditingSessionPitchId] = useState(null);
+  const [editSessionValue, setEditSessionValue] = useState('');
+
   // Gas cylinder entry during session
   const [showGasEntry, setShowGasEntry] = useState(null); // pitchId or null
   const [sessionGasCylinders, setSessionGasCylinders] = useState({}); // { pitchId: [{ collar_number, size, type }] }
   const [gasCollarInput, setGasCollarInput] = useState('');
   const [gasSize, setGasSize] = useState('13kg');
   const [gasType, setGasType] = useState('Propane');
+  const [editingGasCylIndex, setEditingGasCylIndex] = useState(null); // { pitchId, index } or null
+  const [editGasCollar, setEditGasCollar] = useState('');
+  const [editGasSize, setEditGasSize] = useState('13kg');
+  const [editGasType, setEditGasType] = useState('Propane');
 
   // Multi-device sync
   const pollCountRef = useRef(0);
@@ -402,6 +423,7 @@ function ReadingsContent() {
         setSession(active);
         goToSessionIndex(0);
         setTab('session');
+        loadGasCylindersForSession();
       }
     } catch (err) {
       console.warn('Network error loading sessions, using cache:', err);
@@ -526,7 +548,7 @@ function ReadingsContent() {
   }
 
   async function deleteReading(reading) {
-    if (!confirm(`Delete reading ${Number(reading.reading).toLocaleString()} for ${reading.pitch?.pitch_number || 'this pitch'}?`)) return;
+    if (!confirm(`Delete reading ${fmtReading(reading.reading)} for ${reading.pitch?.pitch_number || 'this pitch'}?`)) return;
     if (!supabase) {
       setReadings(prev => prev.filter(r => r.id !== reading.id));
     } else {
@@ -535,134 +557,6 @@ function ReadingsContent() {
     }
     setToast('Reading deleted');
     setTimeout(() => setToast(''), 3000);
-  }
-
-  // ---- Camera & Snap-Photo OCR ----
-  async function initOcrWorker() {
-    if (workerRef.current) return;
-    try {
-      const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-      await worker.setParameters({ tessedit_char_whitelist: '0123456789.', tessedit_pageseg_mode: '7' });
-      workerRef.current = worker;
-    } catch (err) { console.error('Failed to init OCR worker:', err); }
-  }
-
-  async function openCamera() {
-    setShowCamera(true);
-    setCapturedImage(null);
-    setOcrConfidence(null);
-    setPhotoPreview(null);
-    setOcrProcessing(false);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
-      });
-      streamRef.current = stream;
-      await new Promise(r => setTimeout(r, 300));
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch {
-      setToast('Camera access denied. Please allow camera permissions.');
-      setTimeout(() => setToast(''), 3000);
-      setShowCamera(false);
-    }
-  }
-
-  function preprocessImage(canvas) {
-    const ctx = canvas.getContext('2d');
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const d = imgData.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      const c = gray < 128 ? Math.max(0, gray * 0.5) : Math.min(255, gray * 1.5 + 30);
-      const bw = c > 140 ? 255 : 0;
-      d[i] = bw; d[i + 1] = bw; d[i + 2] = bw;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    return canvas;
-  }
-
-  async function capturePhoto() {
-    const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
-
-    // Capture full-resolution frame
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
-    const photoUrl = canvas.toDataURL('image/jpeg', 0.92);
-    setPhotoPreview(photoUrl);
-    setOcrProcessing(true);
-
-    // Stop camera stream (we have the photo now)
-    stopCameraStream();
-
-    // Prepare cropped + preprocessed version for OCR (center 70% width, 25% height for meter digits)
-    const vw = canvas.width, vh = canvas.height;
-    const boxW = Math.round(vw * 0.8), boxH = Math.round(vh * 0.3);
-    const boxX = Math.round((vw - boxW) / 2), boxY = Math.round((vh - boxH) / 2);
-    const cropped = document.createElement('canvas');
-    cropped.width = boxW * 2; cropped.height = boxH * 2;
-    const cCtx = cropped.getContext('2d');
-    cCtx.imageSmoothingEnabled = false;
-    cCtx.drawImage(canvas, boxX, boxY, boxW, boxH, 0, 0, boxW * 2, boxH * 2);
-    preprocessImage(cropped);
-
-    // Run OCR on the cropped area
-    try {
-      await initOcrWorker();
-      const dataUrl = cropped.toDataURL('image/png');
-      const { data } = await workerRef.current.recognize(dataUrl);
-      let digits = data.text.replace(/[^0-9.]/g, '').replace(/^\.+|\.+$/g, '').trim();
-      digits = digits.replace(/\.{2,}/g, '.');
-
-      if (digits && digits.length >= 3) {
-        setNewReading(digits);
-        setOcrConfidence(Math.round(data.confidence));
-      } else {
-        setOcrConfidence(0);
-        setToast('Could not read digits clearly. You can enter manually or retake.');
-        setTimeout(() => setToast(''), 4000);
-      }
-    } catch (err) {
-      console.error('OCR error:', err);
-      setToast('OCR failed. Please enter the reading manually.');
-      setTimeout(() => setToast(''), 4000);
-    }
-    setOcrProcessing(false);
-  }
-
-  function stopCameraStream() {
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-  }
-
-  async function terminateWorker() {
-    if (workerRef.current) { try { await workerRef.current.terminate(); } catch {} workerRef.current = null; }
-  }
-
-  function acceptReading() {
-    setCapturedImage(photoPreview);
-    setPhotoPreview(null);
-    terminateWorker();
-    setShowCamera(false);
-    setToast(`Reading confirmed: ${newReading}`);
-    setTimeout(() => setToast(''), 3000);
-  }
-
-  function closeCamera() {
-    stopCameraStream(); terminateWorker(); setShowCamera(false);
-    setPhotoPreview(null); setOcrProcessing(false);
-  }
-
-  function retakePhoto() {
-    setPhotoPreview(null);
-    setOcrProcessing(false);
-    setOcrConfidence(null);
-    setNewReading('');
-    // Reopen camera stream
-    openCamera();
   }
 
   // ---- Session functions ----
@@ -744,6 +638,7 @@ function ReadingsContent() {
     setOcrConfidence(null);
     setTab('session');
     setPastSessions(prev => [newSession, ...prev]);
+    loadGasCylindersForSession();
     setToast('Reading session started — other devices can join this session');
     setTimeout(() => setToast(''), 4000);
   }
@@ -779,6 +674,29 @@ function ReadingsContent() {
     loadData();
     setToast(`Baseline readings saved for ${entries.length} pitches`);
     setTimeout(() => setToast(''), 3000);
+  }
+
+  // ---- Load gas cylinders for all pitches (rehydrate sessionGasCylinders from DB) ----
+  async function loadGasCylindersForSession() {
+    if (!supabase) return;
+    try {
+      const { data } = await supabase
+        .from('gas_cylinders')
+        .select('id, collar_number, size, type, pitch_id, status')
+        .eq('status', 'with_customer')
+        .order('created_at', { ascending: false });
+      if (data && data.length > 0) {
+        const map = {};
+        data.forEach(c => {
+          if (!c.pitch_id) return;
+          if (!map[c.pitch_id]) map[c.pitch_id] = [];
+          map[c.pitch_id].push({ id: c.id, collar_number: c.collar_number, size: c.size, type: c.type });
+        });
+        setSessionGasCylinders(map);
+      }
+    } catch (err) {
+      console.error('Failed to load gas cylinders:', err);
+    }
   }
 
   // ---- Gas cylinder entry during session ----
@@ -852,7 +770,56 @@ function ReadingsContent() {
     setTimeout(() => setToast(''), 3000);
   }
 
-  function removeSessionGasCylinder(pitchId, index) {
+  async function updateSessionGasCylinder(pitchId, index) {
+    if (!editGasCollar.trim()) return;
+    const cyl = (sessionGasCylinders[pitchId] || [])[index];
+    const updatedCyl = { ...cyl, collar_number: editGasCollar.trim(), size: editGasSize, type: editGasType };
+
+    if (supabase && cyl) {
+      try {
+        if (cyl.id) {
+          await supabase.from('gas_cylinders').update({
+            collar_number: updatedCyl.collar_number, size: updatedCyl.size, type: updatedCyl.type,
+            updated_at: new Date().toISOString(),
+          }).eq('id', cyl.id);
+        } else if (cyl.collar_number) {
+          await supabase.from('gas_cylinders').update({
+            collar_number: updatedCyl.collar_number, size: updatedCyl.size, type: updatedCyl.type,
+            updated_at: new Date().toISOString(),
+          }).eq('collar_number', cyl.collar_number).eq('pitch_id', pitchId);
+        }
+      } catch (err) {
+        console.error('Gas cylinder update error:', err);
+        setToast('Failed to update cylinder — try again');
+        setTimeout(() => setToast(''), 3000);
+        return;
+      }
+    }
+
+    setSessionGasCylinders(prev => {
+      const updated = [...(prev[pitchId] || [])];
+      updated[index] = updatedCyl;
+      return { ...prev, [pitchId]: updated };
+    });
+    setEditingGasCylIndex(null);
+    setToast(`Cylinder updated to ${updatedCyl.collar_number}`);
+    setTimeout(() => setToast(''), 3000);
+  }
+
+  async function removeSessionGasCylinder(pitchId, index) {
+    const cyl = (sessionGasCylinders[pitchId] || [])[index];
+    // Remove from DB if it has an id or collar_number
+    if (supabase && cyl) {
+      try {
+        if (cyl.id) {
+          await supabase.from('gas_cylinders').update({ status: 'returned', pitch_id: null, updated_at: new Date().toISOString() }).eq('id', cyl.id);
+        } else if (cyl.collar_number) {
+          await supabase.from('gas_cylinders').update({ status: 'returned', pitch_id: null, updated_at: new Date().toISOString() }).eq('collar_number', cyl.collar_number).eq('pitch_id', pitchId);
+        }
+      } catch (err) {
+        console.error('Failed to remove cylinder from DB:', err);
+      }
+    }
     setSessionGasCylinders(prev => {
       const updated = [...(prev[pitchId] || [])];
       updated.splice(index, 1);
@@ -975,6 +942,33 @@ function ReadingsContent() {
     setTimeout(() => setToast(''), 3000);
   }
 
+  async function editCompletedSession(sess) {
+    // Re-open a completed session for editing all readings and gas cylinders
+    const editSession = { ...sess, status: 'active', completed_at: null, _editing: true };
+
+    // Update status in DB
+    if (supabase) {
+      try {
+        await supabase.from('reading_sessions').update({
+          status: 'active', completed_at: null,
+        }).eq('id', sess.id);
+      } catch (err) {
+        console.error('Failed to reopen session:', err);
+      }
+    }
+
+    setSession(editSession);
+    setPastSessions(prev => prev.map(s => s.id === sess.id ? editSession : s));
+    goToSessionIndex(0);
+    setNewReading('');
+    setCapturedImage(null);
+    setOcrConfidence(null);
+    setTab('session');
+    loadGasCylindersForSession();
+    setToast('Session reopened for editing — navigate to any pitch to edit readings or gas cylinders');
+    setTimeout(() => setToast(''), 5000);
+  }
+
   function resumeSession(sess) {
     setSession(sess);
     const sPitches = pitchesForSession(sess);
@@ -984,6 +978,7 @@ function ReadingsContent() {
     setCapturedImage(null);
     setOcrConfidence(null);
     setTab('session');
+    loadGasCylindersForSession();
     setToast('Session resumed');
     setTimeout(() => setToast(''), 3000);
   }
@@ -1151,7 +1146,7 @@ function ReadingsContent() {
     updateSession(updatedSession);
 
     const cost = (usage * unitRate).toFixed(2);
-    setToast(`${pitch.pitch_number}: ${readingVal} saved (${usage} kWh = £${cost})`);
+    setToast(`${pitch.pitch_number}: ${fmtReading(readingVal)} saved (${usage} kWh = £${cost})`);
     setTimeout(() => setToast(''), 3000);
 
     // Auto advance to next unread pitch
@@ -1178,6 +1173,56 @@ function ReadingsContent() {
     if (!supabase) loadData();
   }
 
+  // ---- Edit an already-saved session reading ----
+  async function updateSessionReading() {
+    if (!session || !editingSessionPitchId || !editSessionValue) return;
+    setSaving(true);
+
+    const pitch = pitches.find(p => p.id === editingSessionPitchId);
+    const cr = session.readings[editingSessionPitchId];
+    const newVal = parseFloat(editSessionValue);
+    const prevReading = cr?.previous_reading || 0;
+    const usage = Math.max(0, newVal - prevReading);
+
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('meter_readings')
+          .update({ reading: newVal, usage_kwh: usage, updated_at: new Date().toISOString() })
+          .eq('session_id', session.id)
+          .eq('pitch_id', editingSessionPitchId);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Update reading error:', err);
+        setToast('Failed to update reading — try again');
+        setTimeout(() => setToast(''), 3000);
+        setSaving(false);
+        return;
+      }
+    }
+
+    // Update session state
+    const updatedSession = {
+      ...session,
+      readings: {
+        ...session.readings,
+        [editingSessionPitchId]: {
+          ...cr,
+          reading: newVal,
+          usage_kwh: usage,
+          read_at: new Date().toISOString(),
+        },
+      },
+    };
+    updateSession(updatedSession);
+    setEditingSessionPitchId(null);
+    setEditSessionValue('');
+    setSaving(false);
+
+    const cost = (usage * unitRate).toFixed(2);
+    setToast(`${pitch?.pitch_number || 'Pitch'} updated: ${fmtReading(newVal)} (${usage} kWh = £${cost})`);
+    setTimeout(() => setToast(''), 3000);
+  }
+
   function sessionSkipPitch() {
     if (!session) return;
     const sPitches = pitchesForSession();
@@ -1199,6 +1244,16 @@ function ReadingsContent() {
   }
 
   function pauseSession() {
+    // If editing a completed session, re-mark it as complete
+    if (session?._editing) {
+      const completed = { ...session, status: 'complete', completed_at: new Date().toISOString(), _editing: false };
+      updateSession(completed);
+      setSession(null);
+      setTab('readings');
+      setToast('Session saved and marked complete');
+      setTimeout(() => setToast(''), 3000);
+      return;
+    }
     setTab('readings');
     setToast('Session paused — you can resume anytime');
     setTimeout(() => setToast(''), 3000);
@@ -1325,8 +1380,8 @@ function ReadingsContent() {
         doc.text(p.pitch_number, 16, y);
         doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
         doc.text(r.meter_id || p.meter_id || '', 86, y);
-        doc.text(String(r.previous_reading || 0), 112, y);
-        doc.text(String(r.reading), 142, y);
+        doc.text(fmtReading(r.previous_reading || 0), 112, y);
+        doc.text(fmtReading(r.reading), 142, y);
         doc.setTextColor(16, 185, 129);
         doc.text(String(r.usage_kwh || 0), 170, y);
         if (showCost) doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 190, y);
@@ -1475,8 +1530,8 @@ function ReadingsContent() {
         doc.text(p.pitch_number, 16, y);
         doc.text((r.customer_name || p.customer_name || 'Vacant').substring(0, 25), 36, y);
         doc.text(r.meter_id || p.meter_id || '', 86, y);
-        doc.text(String(r.previous_reading || 0), 112, y);
-        doc.text(String(r.reading), 142, y);
+        doc.text(fmtReading(r.previous_reading || 0), 112, y);
+        doc.text(fmtReading(r.reading), 142, y);
         doc.setTextColor(16, 185, 129);
         doc.text(String(r.usage_kwh || 0), 170, y);
         if (showCost) doc.text(`£${((r.usage_kwh || 0) * rate).toFixed(2)}`, 190, y);
@@ -1656,109 +1711,6 @@ function ReadingsContent() {
         </div>
       </div>
 
-      {/* Camera Overlay — Snap Photo */}
-      {showCamera && (
-        <div className="fixed inset-0 z-50 bg-black flex flex-col">
-          <div className="flex items-center justify-between p-4">
-            <div>
-              <h3 className="text-white font-bold text-sm">Meter Photo</h3>
-              {(selectedPitchObj || currentSessionPitch) && (
-                <p className="text-white/60 text-xs">
-                  Pitch {(selectedPitchObj || currentSessionPitch)?.pitch_number} — {(selectedPitchObj || currentSessionPitch)?.customer_name || 'Vacant'}
-                </p>
-              )}
-            </div>
-            <button onClick={closeCamera} className="text-white/70 hover:text-white">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Live camera view (before capture) */}
-          {!photoPreview && (
-            <>
-              <div className="flex-1 flex items-center justify-center relative">
-                <video ref={videoRef} autoPlay playsInline className="max-w-full max-h-full" />
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-[80%] h-[30%] border-2 border-white/60 rounded-lg flex items-center justify-center">
-                    <span className="text-white/50 text-xs bg-black/30 px-2 py-1 rounded">Centre meter digits here</span>
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 flex flex-col items-center gap-3">
-                <button
-                  onClick={capturePhoto}
-                  className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform border-4 border-white/30"
-                >
-                  <div className="w-16 h-16 bg-white rounded-full border-2 border-slate-300" />
-                </button>
-                <p className="text-white/50 text-xs">Tap to take photo of meter display</p>
-                <button onClick={closeCamera} className="px-5 py-2 bg-slate-700/80 text-white/70 rounded-xl text-xs hover:bg-slate-600 transition-colors">
-                  Cancel — enter manually
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* Photo preview + OCR result */}
-          {photoPreview && (
-            <>
-              <div className="flex-1 flex items-center justify-center p-4">
-                <img src={photoPreview} className="max-w-full max-h-full rounded-xl object-contain" alt="Meter photo" />
-              </div>
-              <div className="p-4 flex flex-col items-center gap-3">
-                {ocrProcessing ? (
-                  <div className="bg-slate-900/80 backdrop-blur rounded-xl px-6 py-4 min-w-[250px] text-center">
-                    <div className="flex items-center justify-center gap-2 mb-2">
-                      <div className="animate-spin w-5 h-5 border-2 border-teal-400 border-t-transparent rounded-full" />
-                      <span className="text-teal-400 text-sm font-semibold">Reading digits...</span>
-                    </div>
-                    <p className="text-white/40 text-xs">Processing photo with OCR</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="bg-slate-900/80 backdrop-blur rounded-xl px-6 py-4 min-w-[250px] text-center">
-                      {newReading && ocrConfidence > 0 ? (
-                        <div>
-                          <div className="flex items-center justify-center gap-2 mb-1">
-                            <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                            <span className="text-green-400 text-xs font-semibold uppercase tracking-wider">Reading Detected</span>
-                          </div>
-                          <p className="text-white font-mono text-3xl font-bold tracking-wider">{newReading}</p>
-                          <p className="text-white/50 text-xs mt-1">{ocrConfidence}% confidence</p>
-                        </div>
-                      ) : (
-                        <div>
-                          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wider mb-1">Could not read digits</p>
-                          <p className="text-white/40 text-xs">Try taking a clearer photo or enter manually</p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button onClick={retakePhoto} className="px-5 py-2.5 bg-slate-700 text-white rounded-xl text-sm font-medium hover:bg-slate-600 transition-colors">
-                        Retake
-                      </button>
-                      {newReading && (
-                        <button onClick={acceptReading} className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-500 transition-colors flex items-center gap-2">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                          Accept Reading
-                        </button>
-                      )}
-                      <button onClick={() => { setShowCamera(false); setPhotoPreview(null); terminateWorker(); }} className="px-4 py-2.5 bg-slate-700/60 text-white/60 rounded-xl text-xs hover:bg-slate-600 transition-colors">
-                        Enter Manually
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
       {/* Export Modal */}
       {showExportModal && exportSession && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
@@ -1826,7 +1778,7 @@ function ReadingsContent() {
                     <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" autoFocus />
                     {editingReading && (
-                      <p className="text-xs text-slate-400 mt-1">Previous: {Number(editingReading.previous_reading).toLocaleString()} | Original: {Number(editingReading.reading).toLocaleString()}</p>
+                      <p className="text-xs text-slate-400 mt-1">Previous: {fmtReading(editingReading.previous_reading)} | Original: {fmtReading(editingReading.reading)}</p>
                     )}
                   </div>
                   <div className="flex items-end gap-2">
@@ -1837,29 +1789,11 @@ function ReadingsContent() {
                     </button>
                   </div>
                 </div>
-                {selectedPitch && !editingReading && (
-                  <div className="mt-3">
-                    {!capturedImage ? (
-                      <button onClick={openCamera} className="w-full py-4 border border-dashed border-slate-300 rounded-xl text-sm text-slate-400 hover:border-teal-400 hover:text-teal-600 transition-colors flex items-center justify-center gap-2">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="font-medium">Or snap a photo (OCR)</span>
-                      </button>
-                    ) : (
-                      <div>
-                        <img src={capturedImage} className="w-full rounded-xl border max-h-36 object-cover" alt="Meter photo" />
-                        <div className="flex items-center gap-2 mt-2">
-                          {ocrConfidence !== null && ocrConfidence > 0 && (
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ocrConfidence > 80 ? 'bg-green-100 text-green-700' : ocrConfidence > 50 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                              OCR: {ocrConfidence}% confidence
-                            </span>
-                          )}
-                          <button onClick={() => { setCapturedImage(null); setOcrConfidence(null); openCamera(); }} className="text-xs text-teal-600 hover:text-teal-800 font-medium">Rescan</button>
-                        </div>
-                      </div>
-                    )}
+                {/* Formatted reading preview */}
+                {newReading && (
+                  <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 flex items-center justify-between">
+                    <span className="text-xs text-slate-500">Will save as:</span>
+                    <span className="text-lg font-mono font-bold text-slate-800 tracking-wider">{fmtReading(newReading)}</span>
                   </div>
                 )}
               </div>
@@ -1892,8 +1826,8 @@ function ReadingsContent() {
                       <tr key={r.id} className="hover:bg-slate-50">
                         <td className="px-4 py-3 text-sm font-semibold text-slate-900">{r.pitch?.pitch_number || '—'}</td>
                         <td className="px-4 py-3 text-sm text-slate-600">{r.pitch?.customer_name || '—'}</td>
-                        <td className="px-4 py-3 text-sm text-right font-mono text-slate-400">{Number(r.previous_reading).toLocaleString()}</td>
-                        <td className="px-4 py-3 text-sm text-right font-mono">{Number(r.reading).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono text-slate-400">{fmtReading(r.previous_reading)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{fmtReading(r.reading)}</td>
                         <td className="px-4 py-3 text-sm text-right font-bold text-emerald-600">{Number(r.usage_kwh).toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm text-right font-bold text-blue-600">&pound;{(Number(r.usage_kwh || 0) * unitRate).toFixed(2)}</td>
                         <td className="px-4 py-3 text-xs text-right text-slate-400 hidden sm:table-cell">{r.read_at ? new Date(r.read_at).toLocaleDateString() : '—'}</td>
@@ -1983,7 +1917,7 @@ function ReadingsContent() {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-slate-800 truncate">{p.customer_name || 'Vacant'}</p>
                             <p className="text-xs text-slate-400">Meter: {p.meter_id}</p>
-                            {lastReading && <p className="text-xs text-emerald-600">Has reading: {Number(lastReading.reading).toLocaleString()}</p>}
+                            {lastReading && <p className="text-xs text-emerald-600">Has reading: {fmtReading(lastReading.reading)}</p>}
                           </div>
                           <input
                             type="number"
@@ -2037,6 +1971,14 @@ function ReadingsContent() {
                                   Resume
                                 </button>
                               )}
+                              {s.status === 'complete' && (
+                                <button onClick={() => editCompletedSession(s)} className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-medium hover:bg-amber-200 flex items-center gap-1">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                  </svg>
+                                  Edit
+                                </button>
+                              )}
                               <button onClick={() => { setExportSession(s); setShowExportModal(true); }} className="px-3 py-1.5 bg-teal-100 text-teal-700 rounded-lg text-xs font-medium hover:bg-teal-200">
                                 Export
                               </button>
@@ -2075,8 +2017,18 @@ function ReadingsContent() {
                       <button onClick={() => { setExportSession(session); setShowExportModal(true); }} className="px-3 py-1.5 bg-teal-100 text-teal-700 rounded-lg text-xs font-medium hover:bg-teal-200">
                         Export
                       </button>
+                      {session._editing && sessionCompleted >= sessionTotal && (
+                        <button onClick={() => {
+                          const completed = { ...session, status: 'complete', completed_at: new Date().toISOString(), _editing: false };
+                          updateSession(completed);
+                          setToast('Session marked complete');
+                          setTimeout(() => setToast(''), 3000);
+                        }} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500">
+                          Save & Complete
+                        </button>
+                      )}
                       <button onClick={pauseSession} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-200">
-                        Pause
+                        {session._editing ? 'Done Editing' : 'Pause'}
                       </button>
                     </div>
                   </div>
@@ -2138,7 +2090,7 @@ function ReadingsContent() {
                             <p className="text-xs text-slate-400 italic mt-1">Dormant</p>
                           ) : done && r ? (
                             <p className="text-xs text-emerald-600 font-mono mt-1 truncate">
-                              {r.reading} &mdash; {r.usage_kwh} kWh
+                              {fmtReading(r.reading)} &mdash; {r.usage_kwh} kWh
                             </p>
                           ) : null}
                         </button>
@@ -2186,17 +2138,46 @@ function ReadingsContent() {
                             </button>
                           </div>
                         </div>
+                      ) : editingSessionPitchId === currentSessionPitch.id ? (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                          <p className="text-xs text-amber-700 font-medium mb-2">Edit Reading for {currentSessionPitch.pitch_number}</p>
+                          <div className="flex items-end gap-2">
+                            <div className="flex-1">
+                              <label className="block text-xs text-slate-500 mb-1">New Reading (kWh)</label>
+                              <input type="number" value={editSessionValue} onChange={e => setEditSessionValue(e.target.value)}
+                                className="w-full px-3 py-2 border border-amber-200 rounded-lg text-sm font-mono text-lg focus:outline-none focus:ring-2 focus:ring-amber-500" autoFocus />
+                            </div>
+                            <button onClick={updateSessionReading} disabled={!editSessionValue || saving}
+                              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-amber-500">
+                              {saving ? 'Saving...' : 'Update'}
+                            </button>
+                            <button onClick={() => { setEditingSessionPitchId(null); setEditSessionValue(''); }}
+                              className="px-3 py-2 text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-1">Previous reading: {fmtReading(cr.previous_reading || 0)}</p>
+                        </div>
                       ) : (
                         <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4">
-                          <p className="text-sm text-emerald-800 font-medium">
-                            Reading: <span className="font-mono">{cr.reading}</span>
-                            <span className="text-emerald-600 ml-2">({cr.usage_kwh} kWh)</span>
-                            <span className="text-blue-600 ml-2 font-bold">&pound;{((cr.usage_kwh || 0) * unitRate).toFixed(2)}</span>
-                          </p>
-                          <p className="text-xs text-emerald-600">
-                            Recorded at {new Date(cr.read_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                            <span className="text-slate-400 ml-2">@ &pound;{unitRate.toFixed(2)}/kWh</span>
-                          </p>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm text-emerald-800 font-medium">
+                                Reading: <span className="font-mono">{fmtReading(cr.reading)}</span>
+                                <span className="text-emerald-600 ml-2">({cr.usage_kwh} kWh)</span>
+                                <span className="text-blue-600 ml-2 font-bold">&pound;{((cr.usage_kwh || 0) * unitRate).toFixed(2)}</span>
+                              </p>
+                              <p className="text-xs text-emerald-600">
+                                Recorded at {new Date(cr.read_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                                <span className="text-slate-400 ml-2">@ &pound;{unitRate.toFixed(2)}/kWh</span>
+                              </p>
+                            </div>
+                            <button onClick={() => { setEditingSessionPitchId(currentSessionPitch.id); setEditSessionValue(String(cr.reading)); }}
+                              className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-medium hover:bg-amber-200 transition-colors flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                              Edit
+                            </button>
+                          </div>
                         </div>
                       );
                     })()}
@@ -2207,7 +2188,7 @@ function ReadingsContent() {
                       return prevR ? (
                         <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-3 flex items-center justify-between">
                           <span className="text-xs text-slate-500">Last reading:</span>
-                          <span className="text-sm font-mono font-medium text-slate-700">{Number(prevR.reading).toLocaleString()} kWh</span>
+                          <span className="text-sm font-mono font-medium text-slate-700">{fmtReading(prevR.reading)}</span>
                           <span className="text-xs text-slate-400">{prevR.read_at ? new Date(prevR.read_at).toLocaleDateString('en-GB') : ''}</span>
                         </div>
                       ) : (
@@ -2224,38 +2205,18 @@ function ReadingsContent() {
                           <div className="flex-1">
                             <label className="block text-xs font-medium text-slate-500 mb-1">Reading (kWh)</label>
                             <input type="number" value={newReading} onChange={e => setNewReading(e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 15234" autoFocus />
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-lg" placeholder="e.g. 07686.00" autoFocus />
                           </div>
                           <button onClick={saveSessionReading} disabled={!newReading || saving}
                             className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-emerald-500 transition-colors">
                             {saving ? 'Saving...' : 'Save'}
                           </button>
                         </div>
-                      </div>
-                    )}
-
-                    {/* Camera — optional OCR helper */}
-                    {!currentPitchDone && (
-                      <div className="mt-3">
-                        {!capturedImage ? (
-                          <button onClick={openCamera} className="w-full py-4 border border-dashed border-slate-300 rounded-xl text-sm text-slate-400 hover:border-teal-400 hover:text-teal-600 transition-colors flex items-center justify-center gap-2">
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            <span className="font-medium">Or snap a photo (OCR)</span>
-                          </button>
-                        ) : (
-                          <div>
-                            <img src={capturedImage} className="w-full rounded-xl border max-h-36 object-cover" alt="Meter" />
-                            <div className="flex items-center gap-2 mt-2">
-                              {ocrConfidence !== null && ocrConfidence > 0 && (
-                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ocrConfidence > 80 ? 'bg-green-100 text-green-700' : ocrConfidence > 50 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                                  {ocrConfidence}% confidence
-                                </span>
-                              )}
-                              <button onClick={() => { setCapturedImage(null); setOcrConfidence(null); openCamera(); }} className="text-xs text-teal-600 hover:text-teal-800 font-medium">Rescan</button>
-                            </div>
+                        {/* Formatted reading preview */}
+                        {newReading && (
+                          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Will save as:</span>
+                            <span className="text-lg font-mono font-bold text-slate-800 tracking-wider">{fmtReading(newReading)}</span>
                           </div>
                         )}
                       </div>
@@ -2279,7 +2240,7 @@ function ReadingsContent() {
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                         </svg>
-                        {showGasEntry === currentSessionPitch.id ? 'Hide' : 'Add'} Gas Cylinders for this Pitch
+                        {showGasEntry === currentSessionPitch.id ? 'Hide' : 'Manage'} Gas Cylinders for this Pitch
                       </button>
                       {showGasEntry === currentSessionPitch.id && (
                         <div className="mt-2 bg-orange-50 border border-orange-200 rounded-lg p-3">
@@ -2290,11 +2251,36 @@ function ReadingsContent() {
                             return pitchCyls.length > 0 && (
                               <div className="mb-2 space-y-1">
                                 {pitchCyls.map((gc, i) => (
-                                  <div key={i} className="flex items-center justify-between bg-white rounded px-2 py-1 border border-orange-100">
-                                    <span className="text-sm font-mono font-medium text-slate-800">{gc.collar_number}</span>
-                                    <span className="text-xs text-slate-400">{gc.size} {gc.type}</span>
-                                    <button onClick={() => removeSessionGasCylinder(currentSessionPitch.id, i)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
-                                  </div>
+                                  editingGasCylIndex?.pitchId === currentSessionPitch.id && editingGasCylIndex?.index === i ? (
+                                    <div key={i} className="bg-white rounded px-2 py-2 border border-amber-300 space-y-1">
+                                      <div className="flex items-end gap-1">
+                                        <input type="text" value={editGasCollar} onChange={e => setEditGasCollar(e.target.value)}
+                                          className="flex-1 px-2 py-1 border border-amber-200 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500" placeholder="Collar no." autoFocus />
+                                        <select value={editGasSize} onChange={e => setEditGasSize(e.target.value)} className="px-1 py-1 border border-amber-200 rounded text-xs">
+                                          <option>13kg</option><option>6kg</option><option>19kg</option><option>47kg</option>
+                                        </select>
+                                        <select value={editGasType} onChange={e => setEditGasType(e.target.value)} className="px-1 py-1 border border-amber-200 rounded text-xs">
+                                          <option>Propane</option><option>Butane</option><option>Patio Gas</option>
+                                        </select>
+                                      </div>
+                                      <div className="flex gap-1">
+                                        <button onClick={() => updateSessionGasCylinder(currentSessionPitch.id, i)}
+                                          className="px-2 py-1 bg-amber-600 text-white rounded text-xs font-medium hover:bg-amber-500">Save</button>
+                                        <button onClick={() => setEditingGasCylIndex(null)}
+                                          className="px-2 py-1 text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div key={i} className="flex items-center justify-between bg-white rounded px-2 py-1 border border-orange-100">
+                                      <span className="text-sm font-mono font-medium text-slate-800">{gc.collar_number}</span>
+                                      <span className="text-xs text-slate-400">{gc.size} {gc.type}</span>
+                                      <div className="flex items-center gap-2">
+                                        <button onClick={() => { setEditingGasCylIndex({ pitchId: currentSessionPitch.id, index: i }); setEditGasCollar(gc.collar_number); setEditGasSize(gc.size); setEditGasType(gc.type); }}
+                                          className="text-xs text-amber-500 hover:text-amber-700">Edit</button>
+                                        <button onClick={() => removeSessionGasCylinder(currentSessionPitch.id, i)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+                                      </div>
+                                    </div>
+                                  )
                                 ))}
                               </div>
                             );
@@ -2381,7 +2367,7 @@ function ReadingsContent() {
                                 <span className="text-xs text-slate-400 italic">Dormant</span>
                               ) : (
                                 <>
-                                  <span className="text-sm font-mono text-slate-700">{r.reading}</span>
+                                  <span className="text-sm font-mono text-slate-700">{fmtReading(r.reading)}</span>
                                   <span className="text-xs text-emerald-600 ml-2">{r.usage_kwh} kWh</span>
                                   <span className="text-xs text-blue-600 font-bold ml-1">&pound;{((r.usage_kwh || 0) * unitRate).toFixed(2)}</span>
                                 </>

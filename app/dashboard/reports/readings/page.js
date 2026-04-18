@@ -4,6 +4,17 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 
+function fmtReading(val) {
+  const num = parseFloat(val);
+  if (isNaN(num)) return String(val || '');
+  const str = String(val);
+  const dotIdx = str.indexOf('.');
+  let whole, dec;
+  if (dotIdx >= 0) { whole = str.slice(0, dotIdx); dec = str.slice(dotIdx + 1).slice(0, 2).padEnd(2, '0'); }
+  else { whole = String(Math.floor(num)); dec = '00'; }
+  return `${whole.padStart(5, '0')}.${dec}`;
+}
+
 export default function ReadingReportsPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full" /></div>}>
@@ -185,8 +196,8 @@ function ReadingReportsContent() {
         p?.pitch_number || '—',
         p?.customer_name || '—',
         p?.meter_id || '—',
-        Number(r.previous_reading).toLocaleString(),
-        Number(r.reading).toLocaleString(),
+        fmtReading(r.previous_reading),
+        fmtReading(r.reading),
         Number(r.usage_kwh).toLocaleString(),
         `£${(Number(r.usage_kwh) * unitRate).toFixed(2)}`,
       ];
@@ -276,8 +287,8 @@ function ReadingReportsContent() {
       ['Customer:', p?.customer_name || '—'],
       ['Meter ID:', p?.meter_id || '—'],
       ['Date:', new Date(reading.read_at).toLocaleDateString('en-GB')],
-      ['Previous Reading:', Number(reading.previous_reading).toLocaleString()],
-      ['Current Reading:', Number(reading.reading).toLocaleString()],
+      ['Previous Reading:', fmtReading(reading.previous_reading)],
+      ['Current Reading:', fmtReading(reading.reading)],
       ['Usage:', Number(reading.usage_kwh).toLocaleString() + ' kWh'],
       ['Unit Rate:', `£${unitRate.toFixed(2)}/kWh`],
       ['Value:', `£${(Number(reading.usage_kwh) * unitRate).toFixed(2)}`],
@@ -470,8 +481,8 @@ function ReadingReportsContent() {
                       <td className="px-4 py-3 text-sm text-slate-600">{new Date(r.read_at).toLocaleDateString('en-GB')}</td>
                       <td className="px-4 py-3 text-sm font-semibold text-slate-900">{p?.pitch_number || '—'}</td>
                       <td className="px-4 py-3 text-sm text-slate-600 hidden sm:table-cell">{p?.customer_name || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-right font-mono text-slate-400">{Number(r.previous_reading).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm text-right font-mono">{Number(r.reading).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-sm text-right font-mono text-slate-400">{fmtReading(r.previous_reading)}</td>
+                      <td className="px-4 py-3 text-sm text-right font-mono">{fmtReading(r.reading)}</td>
                       <td className="px-4 py-3 text-sm text-right font-bold text-emerald-600">{Number(r.usage_kwh).toLocaleString()}</td>
                       <td className="px-4 py-3 text-sm text-right text-slate-600 hidden sm:table-cell">£{(Number(r.usage_kwh) * unitRate).toFixed(2)}</td>
                       <td className="px-4 py-3 text-right">

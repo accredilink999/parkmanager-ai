@@ -99,16 +99,26 @@ export default function PitchesPage() {
 
     try {
       if (editing) {
-        await supabase.from('pitches').update(payload).eq('id', editing.id);
+        const { error } = await supabase.from('pitches').update(payload).eq('id', editing.id);
+        if (error) throw error;
         setToast('Pitch updated');
       } else {
-        await supabase.from('pitches').insert({ ...payload, org_id: getOrgId() });
+        const orgId = getOrgId();
+        if (!orgId) {
+          setToast('Error: Not logged in — please log in again');
+          setSaving(false);
+          return;
+        }
+        const { error } = await supabase.from('pitches').insert({ ...payload, org_id: orgId });
+        if (error) throw error;
         setToast('Pitch added');
       }
       setTimeout(() => setToast(''), 3000);
       setShowForm(false); resetForm(); loadPitches();
     } catch (err) {
-      setToast('Error: ' + err.message);
+      console.error('Pitch save error:', err);
+      setToast('Error saving pitch: ' + (err.message || err.details || 'Unknown error'));
+      setTimeout(() => setToast(''), 6000);
     }
     setSaving(false);
   }
