@@ -1269,7 +1269,12 @@ function ReadingsContent() {
   function sessionGoToPitch(idx) {
     setSessionPitchIndex(idx);
     const sPitches = pitchesForSession();
-    if (sPitches[idx]) sessionPitchIdRef.current = sPitches[idx].id;
+    if (sPitches[idx]) {
+      sessionPitchIdRef.current = sPitches[idx].id;
+      // Auto-expand gas cylinder section if pitch has cylinders
+      const hasCyls = (sessionGasCylinders[sPitches[idx].id] || []).length > 0;
+      setShowGasEntry(hasCyls ? sPitches[idx].id : null);
+    }
     setNewReading('');
     setCapturedImage(null);
     setOcrConfidence(null);
@@ -2164,6 +2169,12 @@ function ReadingsContent() {
                               {fmtReading(r.reading)} &mdash; {r.usage_kwh} kWh
                             </p>
                           ) : null}
+                          {(sessionGasCylinders[p.id] || []).length > 0 && (
+                            <p className="text-xs text-orange-600 font-medium mt-0.5 flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                              {(sessionGasCylinders[p.id]).length} cylinder{(sessionGasCylinders[p.id]).length > 1 ? 's' : ''}
+                            </p>
+                          )}
                         </button>
                       );
                     })}
@@ -2184,6 +2195,12 @@ function ReadingsContent() {
                           {currentPitchDone && <span className="ml-2 text-xs text-emerald-600 font-medium">&#10003; Done</span>}
                         </p>
                         <p className="text-xs text-slate-500">Meter: {currentSessionPitch.meter_id || 'N/A'}</p>
+                        {(sessionGasCylinders[currentSessionPitch.id] || []).length > 0 && (
+                          <p className="text-xs text-orange-600 font-medium flex items-center gap-1 mt-0.5">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                            {(sessionGasCylinders[currentSessionPitch.id]).length} gas cylinder{(sessionGasCylinders[currentSessionPitch.id]).length > 1 ? 's' : ''} on site
+                          </p>
+                        )}
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-slate-400">Pitch {sessionPitchIndex + 1} of {sessionTotal}</p>
@@ -2442,6 +2459,11 @@ function ReadingsContent() {
                                   <span className="text-xs text-emerald-600 ml-2">{r.usage_kwh} kWh</span>
                                   <span className="text-xs text-blue-600 font-bold ml-1">&pound;{((r.usage_kwh || 0) * unitRate).toFixed(2)}</span>
                                 </>
+                              )}
+                              {(sessionGasCylinders[p.id] || []).length > 0 && (
+                                <div className="text-xs text-orange-600 mt-0.5">
+                                  {(sessionGasCylinders[p.id]).map(gc => gc.collar_number).join(', ')} ({(sessionGasCylinders[p.id]).length} cyl)
+                                </div>
                               )}
                             </div>
                           </div>
