@@ -18,7 +18,7 @@ export default function CustomerPortal() {
   const [readings, setReadings] = useState([]);
   const [pitch, setPitch] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [siteName, setSiteName] = useState('ParkManagerAI');
+  const [siteName, setSiteName] = useState('');
   const [sitePhone, setSitePhone] = useState('');
   const [customerProfile, setCustomerProfile] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -28,6 +28,7 @@ export default function CustomerPortal() {
     if (!saved) { router.push('/login'); return; }
     const u = JSON.parse(saved);
     setUser(u);
+    if (u.org_name) setSiteName(u.org_name);
     loadData(u);
   }, [router]);
 
@@ -232,7 +233,7 @@ export default function CustomerPortal() {
     <div className="min-h-screen bg-slate-50 pb-20">
       {/* Onboarding */}
       {showOnboarding && (
-        <OnboardingModal user={user} pitch={pitch} onComplete={handleOnboardingComplete} />
+        <OnboardingModal user={user} pitch={pitch} siteName={siteName} onComplete={handleOnboardingComplete} />
       )}
 
       {/* Header */}
@@ -254,7 +255,7 @@ export default function CustomerPortal() {
             <button onClick={logout} className="text-xs text-white/70 hover:text-white transition-colors">Sign Out</button>
           </div>
           <h1 className="text-lg font-bold">
-            {customerProfile?.lead_occupier_name || user.full_name || 'Welcome'}
+            {customerProfile?.lead_occupier || user.full_name || 'Welcome'}
           </h1>
           {pitch && (
             <p className="text-sm text-white/80 mt-0.5">Pitch {pitch.pitch_number} &middot; {pitch.meter_id || 'No meter'}</p>

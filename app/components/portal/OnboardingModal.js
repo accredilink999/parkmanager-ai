@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
-export default function OnboardingModal({ user, pitch, onComplete }) {
+export default function OnboardingModal({ user, pitch, siteName, onComplete }) {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
 
@@ -83,7 +83,7 @@ export default function OnboardingModal({ user, pitch, onComplete }) {
     <div className="fixed inset-0 z-50 bg-white flex flex-col">
       {/* Progress */}
       <div className="bg-emerald-600 px-4 pt-8 pb-6 text-white">
-        <h1 className="text-xl font-bold mb-1">Welcome to ParkManagerAI</h1>
+        <h1 className="text-xl font-bold mb-1">Welcome to {siteName || 'your park'}</h1>
         <p className="text-sm text-white/80">Let&apos;s set up your profile</p>
         <div className="flex gap-2 mt-4">
           {[1, 2, 3].map(s => (
