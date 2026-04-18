@@ -160,11 +160,8 @@ export default function CustomerPortal() {
         clearInterval(countdownRef.current);
         countdownRef.current = null;
         setEmergencyCountdown(null);
-        showToast('Calling site manager now...', 'emergency');
+        showToast('Emergency alert sent!', 'emergency');
         playBeep(1200, 500);
-        setTimeout(() => {
-          window.location.href = `tel:${sitePhone.replace(/\s/g, '')}`;
-        }, 500);
       }
     }, 1000);
   }
@@ -394,8 +391,8 @@ export default function CustomerPortal() {
             <div className="w-32 h-32 rounded-full border-4 border-red-500 flex items-center justify-center mx-auto mb-6 animate-pulse">
               <span className="text-6xl font-bold text-red-500">{emergencyCountdown}</span>
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Calling Site Manager</h2>
-            <p className="text-sm text-white/70 mb-8">Alert will be sent in {emergencyCountdown} seconds</p>
+            <h2 className="text-2xl font-bold text-white mb-2">Emergency Alert</h2>
+            <p className="text-sm text-white/70 mb-8">Alert in {emergencyCountdown} seconds</p>
             <button onClick={cancelEmergency}
               className="px-8 py-4 bg-white text-slate-900 rounded-2xl text-lg font-bold hover:bg-slate-100 active:bg-slate-200 transition-colors">
               Cancel Alert
