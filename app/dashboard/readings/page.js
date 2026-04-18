@@ -1288,6 +1288,19 @@ function ReadingsContent() {
 
   // ---- Session Export ----
   async function exportSessionPdf(sess, recipient) {
+    // Reload latest readings from DB so edits are reflected in the PDF
+    if (supabase && sess.id) {
+      try {
+        const { data: freshReadings } = await supabase
+          .from('meter_readings')
+          .select('*, pitches(pitch_number, customer_name, meter_id)')
+          .eq('session_id', sess.id);
+        if (freshReadings && freshReadings.length > 0) {
+          sess = { ...sess, readings: buildReadingsMap(freshReadings) };
+        }
+      } catch {}
+    }
+
     const { default: jsPDF } = await import('jspdf');
     const doc = new jsPDF();
 
@@ -1434,6 +1447,19 @@ function ReadingsContent() {
 
   async function emailSessionReport(sess, recipientType) {
     setSendingEmail(recipientType);
+
+    // Reload latest readings from DB so edits are reflected in the email report
+    if (supabase && sess.id) {
+      try {
+        const { data: freshReadings } = await supabase
+          .from('meter_readings')
+          .select('*, pitches(pitch_number, customer_name, meter_id)')
+          .eq('session_id', sess.id);
+        if (freshReadings && freshReadings.length > 0) {
+          sess = { ...sess, readings: buildReadingsMap(freshReadings) };
+        }
+      } catch {}
+    }
 
     // Load settings from Supabase or localStorage
     let recipientEmail = '', siteName = 'Park Manager AI', hoName = '', rate = unitRate;
