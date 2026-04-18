@@ -209,22 +209,22 @@ export default function CustomerPortal() {
   if (!user) return null;
 
   const tabs = [
-    { key: 'profile', label: 'Profile', icon: (
+    { key: 'profile', label: 'Profile', color: 'emerald', activeBg: 'bg-emerald-100', activeText: 'text-emerald-700', inactiveText: 'text-emerald-400', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
     )},
-    { key: 'financials', label: 'Bills', icon: (
+    { key: 'financials', label: 'Bills', color: 'blue', activeBg: 'bg-blue-100', activeText: 'text-blue-700', inactiveText: 'text-blue-400', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
     )},
-    { key: 'certificates', label: 'Certs', icon: (
+    { key: 'certificates', label: 'Certs', color: 'purple', activeBg: 'bg-purple-100', activeText: 'text-purple-700', inactiveText: 'text-purple-400', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
     )},
-    { key: 'gas', label: 'Gas', icon: (
+    { key: 'gas', label: 'Gas', color: 'amber', activeBg: 'bg-amber-100', activeText: 'text-amber-700', inactiveText: 'text-amber-500', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" /></svg>
     )},
-    { key: 'report', label: 'Report', icon: (
+    { key: 'report', label: 'Report', color: 'teal', activeBg: 'bg-teal-100', activeText: 'text-teal-700', inactiveText: 'text-teal-400', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
     )},
-    { key: 'emergency', label: 'SOS', emergency: true, icon: (
+    { key: 'emergency', label: 'SOS', color: 'red', activeBg: 'bg-red-100', activeText: 'text-red-700', inactiveText: 'text-red-400', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
     )},
   ];
@@ -320,21 +320,24 @@ export default function CustomerPortal() {
 
       {/* Bottom Tab Bar */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-20" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-        <div className="max-w-lg mx-auto flex">
-          {tabs.map(t => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`flex-1 flex flex-col items-center py-2 pt-2.5 transition-colors ${
-                t.emergency
-                  ? tab === t.key ? 'text-red-600' : 'text-red-400'
-                  : tab === t.key ? 'text-emerald-600' : 'text-slate-400'
-              }`}
-            >
-              {t.icon}
-              <span className="text-[10px] font-medium mt-0.5">{t.label}</span>
-            </button>
-          ))}
+        <div className="max-w-lg mx-auto flex gap-0.5 px-1 py-1.5">
+          {tabs.map(t => {
+            const isActive = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex-1 flex flex-col items-center py-1.5 rounded-xl transition-all ${
+                  isActive
+                    ? `${t.activeBg} ${t.activeText} font-bold`
+                    : `${t.inactiveText}`
+                }`}
+              >
+                {t.icon}
+                <span className="text-[10px] font-medium mt-0.5">{t.label}</span>
+              </button>
+            );
+          })}
         </div>
       </nav>
     </div>
