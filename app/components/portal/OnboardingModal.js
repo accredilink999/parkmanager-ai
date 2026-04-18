@@ -41,7 +41,7 @@ export default function OnboardingModal({ user, pitch, onComplete }) {
       user_id: user.id,
       pitch_id: pitch?.id || null,
       org_id: user.org_id || null,
-      lead_occupier_name: leadName.trim(),
+      lead_occupier: leadName.trim(),
       other_occupants: occupants,
       email: email.trim(),
       phone: phone.trim(),
