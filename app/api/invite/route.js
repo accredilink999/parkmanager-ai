@@ -56,6 +56,35 @@ export async function POST(request) {
       org_id: orgId,
     }, { onConflict: 'id' });
 
+    // If customer role, seed customer_profiles and link pitch
+    if (mappedRole === 'customer' && pitch) {
+      // Find the pitch by pitch_number
+      const { data: pitchData } = await getSupabaseAdmin()
+        .from('pitches')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('pitch_number', pitch)
+        .single();
+
+      if (pitchData) {
+        // Update pitch with customer email
+        await getSupabaseAdmin()
+          .from('pitches')
+          .update({ customer_email: email, customer_name: name || email.split('@')[0] })
+          .eq('id', pitchData.id);
+
+        // Seed customer_profiles (onboarding not yet complete)
+        await getSupabaseAdmin().from('customer_profiles').upsert({
+          user_id: userData.user.id,
+          org_id: orgId,
+          pitch_id: pitchData.id,
+          email,
+          lead_occupier: name || '',
+          onboarding_complete: false,
+        }, { onConflict: 'user_id' }).select();
+      }
+    }
+
     // Send invite email
     const html = buildInviteEmail({ name, email, role: mappedRole, pitch, siteUrl, siteName, tempPassword });
     const subject = `You're invited to ${siteName}`;

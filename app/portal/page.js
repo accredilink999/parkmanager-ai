@@ -2,18 +2,26 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import OnboardingModal from '../components/portal/OnboardingModal';
+import PortalProfile from '../components/portal/PortalProfile';
+import PortalFinancials from '../components/portal/PortalFinancials';
+import PortalCertificates from '../components/portal/PortalCertificates';
+import PortalGasOrder from '../components/portal/PortalGasOrder';
+import PortalSiteReport from '../components/portal/PortalSiteReport';
+import PortalEmergency from '../components/portal/PortalEmergency';
 
 export default function CustomerPortal() {
   const router = useRouter();
   const [user, setUser] = useState(null);
-  const [tab, setTab] = useState('bills');
+  const [tab, setTab] = useState('profile');
   const [bills, setBills] = useState([]);
   const [readings, setReadings] = useState([]);
   const [pitch, setPitch] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [expandedBill, setExpandedBill] = useState(null);
   const [siteName, setSiteName] = useState('ParkManagerAI');
   const [sitePhone, setSitePhone] = useState('');
+  const [customerProfile, setCustomerProfile] = useState(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
@@ -25,43 +33,31 @@ export default function CustomerPortal() {
 
   async function loadData(u) {
     setLoading(true);
+
     if (!supabase) {
-      setPitch({
-        id: '1', pitch_number: 'A1', customer_name: u.full_name || 'John Smith',
-        customer_email: u.email, customer_phone: '07700 900000', meter_id: 'M001', status: 'occupied',
-      });
+      // Demo mode
+      setPitch({ id: '1', pitch_number: 'A1', customer_name: u.full_name || 'John Smith', customer_email: u.email, customer_phone: '07700 900000', meter_id: 'M001', status: 'occupied' });
       setBills([
-        {
-          id: '1', usage_kwh: 344, unit_rate: 0.34, amount_gbp: 116.96,
-          start_reading: 14890, end_reading: 15234, status: 'unpaid',
-          period_start: '2026-02-01', period_end: '2026-03-01', created_at: '2026-03-01',
-        },
-        {
-          id: '2', usage_kwh: 289, unit_rate: 0.34, amount_gbp: 98.26,
-          start_reading: 14601, end_reading: 14890, status: 'paid',
-          period_start: '2026-01-01', period_end: '2026-02-01', paid_at: '2026-02-05', created_at: '2026-02-01',
-        },
+        { id: '1', usage_kwh: 344, unit_rate: 0.34, amount_gbp: 116.96, start_reading: 14890, end_reading: 15234, status: 'unpaid', period_start: '2026-02-01', period_end: '2026-03-01', created_at: '2026-03-01' },
+        { id: '2', usage_kwh: 289, unit_rate: 0.34, amount_gbp: 98.26, start_reading: 14601, end_reading: 14890, status: 'paid', period_start: '2026-01-01', period_end: '2026-02-01', paid_at: '2026-02-05', created_at: '2026-02-01' },
       ]);
       setReadings([
         { id: '1', reading: 15234, previous_reading: 14890, usage_kwh: 344, read_at: '2026-03-01T09:15:00' },
         { id: '2', reading: 14890, previous_reading: 14601, usage_kwh: 289, read_at: '2026-02-01T10:30:00' },
-        { id: '3', reading: 14601, previous_reading: 14350, usage_kwh: 251, read_at: '2026-01-02T11:00:00' },
       ]);
+      setCustomerProfile({ lead_occupier_name: u.full_name, email: u.email, phone: '07700 900000', home_address: '123 Main St', other_occupants: [{ name: 'Jane Smith', relationship: 'Spouse' }], emergency_contact_name: 'Bob Smith', emergency_contact_phone: '07700 111111', emergency_contact_relationship: 'Parent', onboarding_complete: true });
       setLoading(false);
       loadSettings();
       return;
     }
 
     try {
-      const { data: pitches } = await supabase
-        .from('pitches')
-        .select('*')
-        .eq('customer_email', u.email)
-        .limit(1);
-
+      // Get pitch
+      const { data: pitches } = await supabase.from('pitches').select('*').eq('customer_email', u.email).limit(1);
       const myPitch = pitches?.[0] || null;
       setPitch(myPitch);
 
+      // Load bills + readings
       if (myPitch) {
         const [billRes, readingRes] = await Promise.all([
           supabase.from('bills').select('*').eq('pitch_id', myPitch.id).order('created_at', { ascending: false }),
@@ -70,9 +66,26 @@ export default function CustomerPortal() {
         setBills(billRes.data || []);
         setReadings(readingRes.data || []);
       }
+
+      // Load customer profile
+      const { data: profile } = await supabase.from('customer_profiles').select('*').eq('user_id', u.id).single();
+      if (profile) {
+        setCustomerProfile(profile);
+        if (!profile.onboarding_complete) {
+          setShowOnboarding(true);
+        }
+      } else {
+        // No profile exists — show onboarding
+        setShowOnboarding(true);
+      }
     } catch (err) {
       console.error('Portal load error:', err);
+      // If customer_profiles table doesn't exist yet, just skip onboarding
+      if (err?.code === 'PGRST116' || err?.message?.includes('customer_profiles')) {
+        // Table might not exist yet
+      }
     }
+
     loadSettings();
     setLoading(false);
   }
@@ -187,28 +200,45 @@ export default function CustomerPortal() {
     doc.save(`Bill-${pitch?.pitch_number || 'Unknown'}-${bill.period_end || 'period'}.pdf`);
   }
 
+  function handleOnboardingComplete(profile) {
+    setCustomerProfile(profile);
+    setShowOnboarding(false);
+  }
+
   if (!user) return null;
 
-  const totalOwed = bills.filter(b => b.status !== 'paid').reduce((s, b) => s + Number(b.amount_gbp || 0), 0);
-
   const tabs = [
-    { key: 'bills', label: 'My Bills', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" /></svg>
-    )},
-    { key: 'readings', label: 'Readings', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-    )},
-    { key: 'details', label: 'My Details', icon: (
+    { key: 'profile', label: 'Profile', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+    )},
+    { key: 'financials', label: 'Bills', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+    )},
+    { key: 'certificates', label: 'Certs', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+    )},
+    { key: 'gas', label: 'Gas', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" /></svg>
+    )},
+    { key: 'report', label: 'Report', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
+    )},
+    { key: 'emergency', label: 'SOS', emergency: true, icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
     )},
   ];
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
+      {/* Onboarding */}
+      {showOnboarding && (
+        <OnboardingModal user={user} pitch={pitch} onComplete={handleOnboardingComplete} />
+      )}
+
       {/* Header */}
-      <header className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-4 pt-6 pb-8">
+      <header className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-4 pt-6 pb-5">
         <div className="max-w-lg mx-auto">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <svg className="w-7 h-7 rounded-lg" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
                 <rect width="192" height="192" rx="38" fill="rgba(255,255,255,0.2)"/>
@@ -223,34 +253,17 @@ export default function CustomerPortal() {
             </div>
             <button onClick={logout} className="text-xs text-white/70 hover:text-white transition-colors">Sign Out</button>
           </div>
-          <h1 className="text-xl font-bold">Hello, {user.full_name || 'Customer'}</h1>
+          <h1 className="text-lg font-bold">
+            {customerProfile?.lead_occupier_name || user.full_name || 'Welcome'}
+          </h1>
           {pitch && (
-            <p className="text-sm text-white/80 mt-1">Pitch {pitch.pitch_number} &middot; Meter {pitch.meter_id || '\u2014'}</p>
-          )}
-          {totalOwed > 0 && (
-            <div className="mt-4 bg-white/15 backdrop-blur-sm rounded-xl p-3 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-white/70">Amount Outstanding</p>
-                <p className="text-2xl font-bold">&pound;{totalOwed.toFixed(2)}</p>
-              </div>
-              <div className="bg-white/20 rounded-lg px-3 py-1.5 text-xs font-medium">
-                {bills.filter(b => b.status !== 'paid').length} unpaid
-              </div>
-            </div>
-          )}
-          {totalOwed === 0 && !loading && (
-            <div className="mt-4 bg-white/15 backdrop-blur-sm rounded-xl p-3 flex items-center gap-2">
-              <svg className="w-5 h-5 text-emerald-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="text-sm text-white/90 font-medium">All bills paid &mdash; you&apos;re up to date!</span>
-            </div>
+            <p className="text-sm text-white/80 mt-0.5">Pitch {pitch.pitch_number} &middot; {pitch.meter_id || 'No meter'}</p>
           )}
         </div>
       </header>
 
       {/* Content */}
-      <div className="max-w-lg mx-auto px-4 -mt-3">
+      <div className="max-w-lg mx-auto px-4 mt-3">
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full" />
@@ -262,245 +275,45 @@ export default function CustomerPortal() {
             </svg>
             <p className="text-sm text-slate-500">No pitch assigned to your account yet.</p>
             <p className="text-xs text-slate-400 mt-1">Contact the site office to get set up.</p>
+            {sitePhone && <p className="text-xs text-emerald-600 mt-2 font-medium">Tel: {sitePhone}</p>}
           </div>
         ) : (
           <>
-            {/* Bills Tab */}
-            {tab === 'bills' && (
-              <div className="space-y-3 mt-1">
-                {bills.length === 0 ? (
-                  <div className="bg-white rounded-2xl border p-6 text-center">
-                    <p className="text-sm text-slate-400">No bills yet.</p>
-                  </div>
-                ) : bills.map(b => (
-                  <div key={b.id} className="bg-white rounded-2xl border overflow-hidden">
-                    <button
-                      className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
-                      onClick={() => setExpandedBill(expandedBill === b.id ? null : b.id)}
-                    >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${b.status === 'paid' ? 'bg-emerald-100' : 'bg-red-100'}`}>
-                        {b.status === 'paid' ? (
-                          <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        ) : (
-                          <span className="text-red-600 font-bold text-sm">&pound;</span>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-900">
-                          {b.period_start && b.period_end
-                            ? `${new Date(b.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} \u2013 ${new Date(b.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
-                            : 'Billing Period'}
-                        </p>
-                        <p className="text-xs text-slate-400">{Number(b.usage_kwh).toLocaleString()} kWh used</p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-base font-bold ${b.status === 'paid' ? 'text-emerald-600' : 'text-slate-900'}`}>
-                          &pound;{Number(b.amount_gbp).toFixed(2)}
-                        </p>
-                        <span className={`text-xs font-medium ${b.status === 'paid' ? 'text-emerald-500' : 'text-red-500'}`}>
-                          {b.status === 'paid' ? 'Paid' : 'Unpaid'}
-                        </span>
-                      </div>
-                      <svg className={`w-4 h-4 text-slate-300 transition-transform flex-shrink-0 ${expandedBill === b.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-
-                    {expandedBill === b.id && (
-                      <div className="border-t bg-slate-50 px-4 py-4 space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="bg-white rounded-xl p-3 border">
-                            <p className="text-xs text-slate-400">Start Reading</p>
-                            <p className="text-lg font-mono font-bold text-slate-700">{Number(b.start_reading || 0).toLocaleString()}</p>
-                          </div>
-                          <div className="bg-white rounded-xl p-3 border">
-                            <p className="text-xs text-slate-400">End Reading</p>
-                            <p className="text-lg font-mono font-bold text-slate-700">{Number(b.end_reading || 0).toLocaleString()}</p>
-                          </div>
-                        </div>
-                        <div className="bg-white rounded-xl p-3 border flex items-center justify-between">
-                          <div>
-                            <p className="text-xs text-slate-400">Usage x Rate</p>
-                            <p className="text-sm text-slate-600">{Number(b.usage_kwh).toLocaleString()} kWh x &pound;{Number(b.unit_rate).toFixed(2)}</p>
-                          </div>
-                          <p className="text-lg font-bold text-emerald-600">&pound;{Number(b.amount_gbp).toFixed(2)}</p>
-                        </div>
-
-                        {b.status === 'paid' && b.paid_at && (
-                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2">
-                            <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <p className="text-xs text-emerald-700">
-                              Paid on {new Date(b.paid_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
-                            </p>
-                          </div>
-                        )}
-
-                        {b.status !== 'paid' && (
-                          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                            <p className="text-xs text-amber-800 font-medium">Payment required &mdash; please contact the site office.</p>
-                            {sitePhone && <p className="text-xs text-amber-700 mt-1">Tel: {sitePhone}</p>}
-                          </div>
-                        )}
-
-                        <button
-                          onClick={() => downloadBillPDF(b)}
-                          className="w-full py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          Download PDF
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+            {tab === 'profile' && (
+              <PortalProfile user={user} pitch={pitch} customerProfile={customerProfile}
+                onUpdate={p => setCustomerProfile(p)} />
             )}
-
-            {/* Readings Tab */}
-            {tab === 'readings' && (
-              <div className="space-y-3 mt-1">
-                {readings.length === 0 ? (
-                  <div className="bg-white rounded-2xl border p-6 text-center">
-                    <p className="text-sm text-slate-400">No meter readings recorded yet.</p>
-                  </div>
-                ) : readings.map((r, i) => (
-                  <div key={r.id} className="bg-white rounded-2xl border p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-semibold text-slate-900">
-                        {r.read_at ? new Date(r.read_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '\u2014'}
-                      </p>
-                      {r.usage_kwh != null && (
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
-                          +{Number(r.usage_kwh).toLocaleString()} kWh
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1">
-                        <p className="text-xs text-slate-400">Previous</p>
-                        <p className="text-base font-mono font-bold text-slate-500">{Number(r.previous_reading || 0).toLocaleString()}</p>
-                      </div>
-                      <svg className="w-4 h-4 text-slate-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                      </svg>
-                      <div className="flex-1 text-right">
-                        <p className="text-xs text-slate-400">Current</p>
-                        <p className="text-base font-mono font-bold text-slate-900">{Number(r.reading).toLocaleString()}</p>
-                      </div>
-                    </div>
-                    {i < readings.length - 1 && r.usage_kwh && readings[i + 1]?.usage_kwh && (
-                      <div className="mt-3 pt-2 border-t">
-                        <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                          <span>vs previous period</span>
-                          <span className={r.usage_kwh > readings[i + 1].usage_kwh ? 'text-red-500' : 'text-emerald-500'}>
-                            {r.usage_kwh > readings[i + 1].usage_kwh ? '+' : ''}{Math.round(((r.usage_kwh - readings[i + 1].usage_kwh) / readings[i + 1].usage_kwh) * 100)}%
-                          </span>
-                        </div>
-                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${r.usage_kwh > readings[i + 1].usage_kwh ? 'bg-red-400' : 'bg-emerald-400'}`}
-                            style={{ width: `${Math.min(100, (r.usage_kwh / Math.max(r.usage_kwh, readings[i + 1].usage_kwh)) * 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+            {tab === 'financials' && (
+              <PortalFinancials bills={bills} readings={readings} pitch={pitch} user={user}
+                siteName={siteName} sitePhone={sitePhone} downloadBillPDF={downloadBillPDF} />
             )}
-
-            {/* Details Tab */}
-            {tab === 'details' && (
-              <div className="space-y-3 mt-1">
-                <div className="bg-white rounded-2xl border overflow-hidden">
-                  <div className="px-4 py-3 bg-emerald-50 border-b border-emerald-100">
-                    <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Pitch Details</p>
-                  </div>
-                  <div className="divide-y">
-                    {[
-                      ['Pitch Number', pitch.pitch_number],
-                      ['Status', pitch.status],
-                      ['Meter ID', pitch.meter_id || '\u2014'],
-                    ].map(([label, val]) => (
-                      <div key={label} className="flex items-center justify-between px-4 py-3">
-                        <p className="text-sm text-slate-500">{label}</p>
-                        <p className="text-sm font-semibold text-slate-900 capitalize">{val}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border overflow-hidden">
-                  <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
-                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider">Your Details</p>
-                  </div>
-                  <div className="divide-y">
-                    {[
-                      ['Name', pitch.customer_name || user.full_name || '\u2014'],
-                      ['Email', pitch.customer_email || user.email || '\u2014'],
-                      ['Phone', pitch.customer_phone || '\u2014'],
-                    ].map(([label, val]) => (
-                      <div key={label} className="flex items-center justify-between px-4 py-3">
-                        <p className="text-sm text-slate-500">{label}</p>
-                        <p className="text-sm font-medium text-slate-900">{val}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border overflow-hidden">
-                  <div className="px-4 py-3 bg-slate-50 border-b">
-                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Account Summary</p>
-                  </div>
-                  <div className="divide-y">
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <p className="text-sm text-slate-500">Total Bills</p>
-                      <p className="text-sm font-bold text-slate-900">{bills.length}</p>
-                    </div>
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <p className="text-sm text-slate-500">Total Paid</p>
-                      <p className="text-sm font-bold text-emerald-600">
-                        &pound;{bills.filter(b => b.status === 'paid').reduce((s, b) => s + Number(b.amount_gbp || 0), 0).toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <p className="text-sm text-slate-500">Outstanding</p>
-                      <p className={`text-sm font-bold ${totalOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                        &pound;{totalOwed.toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <p className="text-sm text-slate-500">Meter Readings</p>
-                      <p className="text-sm font-bold text-slate-900">{readings.length}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <p className="text-xs text-slate-400 text-center pt-2 pb-4">
-                  To update your details, please contact the site office.
-                  {sitePhone && <><br />Tel: {sitePhone}</>}
-                </p>
-              </div>
+            {tab === 'certificates' && (
+              <PortalCertificates pitch={pitch} />
+            )}
+            {tab === 'gas' && (
+              <PortalGasOrder user={user} pitch={pitch} />
+            )}
+            {tab === 'report' && (
+              <PortalSiteReport user={user} pitch={pitch} />
+            )}
+            {tab === 'emergency' && (
+              <PortalEmergency siteName={siteName} sitePhone={sitePhone} />
             )}
           </>
         )}
       </div>
 
       {/* Bottom Tab Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-20">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-20" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         <div className="max-w-lg mx-auto flex">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
               className={`flex-1 flex flex-col items-center py-2 pt-2.5 transition-colors ${
-                tab === t.key ? 'text-emerald-600' : 'text-slate-400'
+                t.emergency
+                  ? tab === t.key ? 'text-red-600' : 'text-red-400'
+                  : tab === t.key ? 'text-emerald-600' : 'text-slate-400'
               }`}
             >
               {t.icon}
