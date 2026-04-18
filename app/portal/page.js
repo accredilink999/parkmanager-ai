@@ -68,23 +68,23 @@ export default function CustomerPortal() {
         setReadings(readingRes.data || []);
       }
 
-      // Load customer profile
-      const { data: profile } = await supabase.from('customer_profiles').select('*').eq('user_id', u.id).single();
-      if (profile) {
-        setCustomerProfile(profile);
-        if (!profile.onboarding_complete) {
+      // Load customer profile via API (bypasses RLS)
+      try {
+        const profRes = await fetch(`/api/customer-profile?user_id=${u.id}`);
+        const profData = await profRes.json();
+        if (profData.profile) {
+          setCustomerProfile(profData.profile);
+          if (!profData.profile.onboarding_complete) {
+            setShowOnboarding(true);
+          }
+        } else {
           setShowOnboarding(true);
         }
-      } else {
-        // No profile exists — show onboarding
+      } catch {
         setShowOnboarding(true);
       }
     } catch (err) {
       console.error('Portal load error:', err);
-      // If customer_profiles table doesn't exist yet, just skip onboarding
-      if (err?.code === 'PGRST116' || err?.message?.includes('customer_profiles')) {
-        // Table might not exist yet
-      }
     }
 
     loadSettings();

@@ -1,6 +1,5 @@
 'use client';
 import { useState } from 'react';
-import { supabase } from '@/lib/supabase';
 
 export default function OnboardingModal({ user, pitch, siteName, onComplete }) {
   const [step, setStep] = useState(1);
@@ -50,33 +49,23 @@ export default function OnboardingModal({ user, pitch, siteName, onComplete }) {
       emergency_contact_phone: ecPhone.trim(),
       emergency_contact_relationship: ecRelationship.trim(),
       onboarding_complete: true,
-      updated_at: new Date().toISOString(),
     };
 
-    if (supabase) {
-      try {
-        const { error } = await supabase.from('customer_profiles').upsert(profile, { onConflict: 'user_id' });
-        if (error) throw error;
-      } catch (err) {
-        console.error('Save profile error:', err);
-        setSaving(false);
-        return;
-      }
+    try {
+      const res = await fetch('/api/customer-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to save');
+      setSaving(false);
+      onComplete(result.profile || profile);
+    } catch (err) {
+      console.error('Save profile error:', err);
+      alert('Failed to save profile: ' + err.message);
+      setSaving(false);
     }
-
-    // Also update pitch with customer details
-    if (supabase && pitch?.id) {
-      try {
-        await supabase.from('pitches').update({
-          customer_name: leadName.trim(),
-          customer_email: email.trim(),
-          customer_phone: phone.trim(),
-        }).eq('id', pitch.id);
-      } catch {}
-    }
-
-    setSaving(false);
-    onComplete(profile);
   }
 
   return (
