@@ -1259,6 +1259,24 @@ function ReadingsContent() {
     setTimeout(() => setToast(''), 3000);
   }
 
+  async function cancelSession(sessId) {
+    if (!confirm('Cancel this session? Any readings saved will be deleted.')) return;
+
+    if (supabase) {
+      await supabase.from('meter_readings').delete().eq('session_id', sessId);
+      await supabase.from('reading_sessions').delete().eq('id', sessId);
+      setPastSessions(prev => prev.filter(s => s.id !== sessId));
+    } else {
+      const all = pastSessions.filter(s => s.id !== sessId);
+      saveSessions(all);
+    }
+
+    setSession(null);
+    setTab('session');
+    setToast('Session cancelled');
+    setTimeout(() => setToast(''), 3000);
+  }
+
   async function deleteSession(sessId) {
     if (!confirm('Delete this session and all its readings?')) return;
 
@@ -2030,6 +2048,9 @@ function ReadingsContent() {
                       )}
                       <button onClick={pauseSession} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-200">
                         {session._editing ? 'Done Editing' : 'Pause'}
+                      </button>
+                      <button onClick={() => cancelSession(session.id)} className="px-3 py-1.5 bg-red-100 text-red-600 rounded-lg text-xs font-medium hover:bg-red-200">
+                        Cancel
                       </button>
                     </div>
                   </div>
