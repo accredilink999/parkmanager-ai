@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import OnboardingModal from '../components/portal/OnboardingModal';
@@ -22,6 +22,10 @@ export default function CustomerPortal() {
   const [sitePhone, setSitePhone] = useState('');
   const [customerProfile, setCustomerProfile] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [emergencyCountdown, setEmergencyCountdown] = useState(null);
+  const [toast, setToast] = useState(null);
+  const countdownRef = useRef(null);
+  const audioCtxRef = useRef(null);
 
   useEffect(() => {
     const saved = sessionStorage.getItem('pm_user');
@@ -116,6 +120,70 @@ export default function CustomerPortal() {
     if (supabase) supabase.auth.signOut();
     router.push('/login');
   }
+
+  // Toast helper
+  function showToast(message, type = 'info') {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  // Beep sound using Web Audio API
+  function playBeep(freq = 800, duration = 200) {
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = audioCtxRef.current;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      gain.gain.value = 0.3;
+      osc.start();
+      osc.stop(ctx.currentTime + duration / 1000);
+    } catch {}
+  }
+
+  // Emergency countdown
+  function startEmergencyCountdown() {
+    if (emergencyCountdown !== null) return;
+    showToast('Emergency alert starting — 10 second countdown', 'warning');
+    playBeep(600, 150);
+    let count = 10;
+    setEmergencyCountdown(count);
+
+    countdownRef.current = setInterval(() => {
+      count--;
+      if (count > 0) {
+        setEmergencyCountdown(count);
+        playBeep(count <= 3 ? 1000 : 800, count <= 3 ? 300 : 150);
+      } else {
+        clearInterval(countdownRef.current);
+        countdownRef.current = null;
+        setEmergencyCountdown(null);
+        showToast('Calling site manager now...', 'emergency');
+        playBeep(1200, 500);
+        setTimeout(() => {
+          window.location.href = `tel:${sitePhone.replace(/\s/g, '')}`;
+        }, 500);
+      }
+    }, 1000);
+  }
+
+  function cancelEmergency() {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setEmergencyCountdown(null);
+    showToast('Emergency alert cancelled', 'success');
+  }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
 
   async function downloadBillPDF(bill) {
     const { default: jsPDF } = await import('jspdf');
@@ -267,8 +335,8 @@ export default function CustomerPortal() {
       <div className="max-w-lg mx-auto px-4 mt-3">
         {/* Emergency button on every page */}
         {sitePhone && !loading && pitch && (
-          <a href={`tel:${sitePhone.replace(/\s/g, '')}`}
-            className="flex items-center gap-3 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl px-4 py-3 mb-3 transition-colors">
+          <button onClick={startEmergencyCountdown}
+            className="w-full flex items-center gap-3 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl px-4 py-3 mb-3 transition-colors text-left">
             <svg className="w-6 h-6 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
             </svg>
@@ -276,7 +344,7 @@ export default function CustomerPortal() {
               <p className="text-sm font-bold">Emergency — I Need Help</p>
               <p className="text-[11px] text-white/70">Press for on-site emergency assistance</p>
             </div>
-          </a>
+          </button>
         )}
 
         {loading ? (
@@ -312,13 +380,43 @@ export default function CustomerPortal() {
               <PortalSiteReport user={user} pitch={pitch} />
             )}
             {tab === 'emergency' && (
-              <PortalEmergency siteName={siteName} sitePhone={sitePhone} />
+              <PortalEmergency siteName={siteName} sitePhone={sitePhone} onEmergencyPress={startEmergencyCountdown} />
             )}
           </>
         )}
       </div>
 
       {/* Bottom Tab Bar */}
+      {/* Emergency Countdown Overlay */}
+      {emergencyCountdown !== null && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center">
+          <div className="text-center">
+            <div className="w-32 h-32 rounded-full border-4 border-red-500 flex items-center justify-center mx-auto mb-6 animate-pulse">
+              <span className="text-6xl font-bold text-red-500">{emergencyCountdown}</span>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">Calling Site Manager</h2>
+            <p className="text-sm text-white/70 mb-8">Alert will be sent in {emergencyCountdown} seconds</p>
+            <button onClick={cancelEmergency}
+              className="px-8 py-4 bg-white text-slate-900 rounded-2xl text-lg font-bold hover:bg-slate-100 active:bg-slate-200 transition-colors">
+              Cancel Alert
+            </button>
+            <p className="text-xs text-white/50 mt-3">Pressed by mistake? Tap cancel above</p>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed top-4 left-4 right-4 z-50 max-w-lg mx-auto rounded-xl px-4 py-3 shadow-lg transition-all ${
+          toast.type === 'emergency' ? 'bg-red-600 text-white' :
+          toast.type === 'warning' ? 'bg-amber-500 text-white' :
+          toast.type === 'success' ? 'bg-emerald-600 text-white' :
+          'bg-slate-800 text-white'
+        }`}>
+          <p className="text-sm font-medium text-center">{toast.message}</p>
+        </div>
+      )}
+
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-20" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         <div className="max-w-lg mx-auto flex gap-0.5 px-1 py-1.5">
           {tabs.map(t => {
