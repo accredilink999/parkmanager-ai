@@ -23,6 +23,7 @@ export default function CustomerPortal() {
   const [customerProfile, setCustomerProfile] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [emergencyCountdown, setEmergencyCountdown] = useState(null);
+  const [alertActive, setAlertActive] = useState(false);
   const [toast, setToast] = useState(null);
   const countdownRef = useRef(null);
   const audioCtxRef = useRef(null);
@@ -160,7 +161,7 @@ export default function CustomerPortal() {
         clearInterval(countdownRef.current);
         countdownRef.current = null;
         setEmergencyCountdown(null);
-        showToast('Emergency alert sent!', 'emergency');
+        setAlertActive(true);
         playBeep(1200, 500);
       }
     }, 1000);
@@ -173,6 +174,11 @@ export default function CustomerPortal() {
     }
     setEmergencyCountdown(null);
     showToast('Emergency alert cancelled', 'success');
+  }
+
+  function cancelAlert() {
+    setAlertActive(false);
+    showToast('Emergency alert stood down', 'success');
   }
 
   // Cleanup on unmount
@@ -398,6 +404,27 @@ export default function CustomerPortal() {
               Cancel Alert
             </button>
             <p className="text-xs text-white/50 mt-3">Pressed by mistake? Tap cancel above</p>
+          </div>
+        </div>
+      )}
+
+      {/* Active Alert Banner */}
+      {alertActive && (
+        <div className="fixed top-0 left-0 right-0 z-40 bg-red-600 animate-pulse">
+          <div className="max-w-lg mx-auto px-4 py-4 flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-white font-bold text-sm">EMERGENCY ALERT ACTIVE</p>
+              <p className="text-white/80 text-xs">Site manager has been notified</p>
+            </div>
+            <button onClick={cancelAlert}
+              className="bg-white text-red-700 px-4 py-2 rounded-xl text-xs font-bold flex-shrink-0 hover:bg-red-50 active:bg-red-100">
+              Stand Down
+            </button>
           </div>
         </div>
       )}
