@@ -27,7 +27,7 @@ export default function BillsPage() {
   const [deletingBill, setDeletingBill] = useState(false);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     const u = JSON.parse(saved);
     setUser(u);

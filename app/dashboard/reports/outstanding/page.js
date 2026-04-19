@@ -34,7 +34,7 @@ export default function OutstandingBillsPage() {
   const [hoName, setHoName] = useState('');
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     setUser(JSON.parse(saved));
     loadData();

@@ -79,7 +79,7 @@ function ReadingReportsContent() {
   const [dateTo, setDateTo] = useState(formatDate(defEnd));
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     setUser(JSON.parse(saved));
     loadData();
@@ -248,7 +248,7 @@ function ReadingReportsContent() {
 
     // Footer
     const pageHeight = doc.internal.pageSize.height;
-    const ru = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const ru = JSON.parse(localStorage.getItem('pm_user') || '{}');
     doc.setFontSize(8);
     doc.setTextColor(80);
     doc.text(`Carried out by: ${ru.full_name || ru.email || ''}`, 14, pageHeight - 16);
@@ -302,7 +302,7 @@ function ReadingReportsContent() {
     });
 
     y += 6;
-    const iru = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const iru = JSON.parse(localStorage.getItem('pm_user') || '{}');
     doc.setFontSize(8);
     doc.setTextColor(80);
     doc.text(`Carried out by: ${iru.full_name || iru.email || ''}`, 14, y);

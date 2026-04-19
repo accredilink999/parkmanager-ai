@@ -78,7 +78,7 @@ export default function LoginPage() {
 
     try {
       if (!supabase) {
-        sessionStorage.setItem('pm_user', JSON.stringify({
+        localStorage.setItem('pm_user', JSON.stringify({
           id: 'demo',
           email,
           role: 'super_admin',
@@ -107,7 +107,7 @@ export default function LoginPage() {
         org_name: profile?.org_name || null,
       };
 
-      sessionStorage.setItem('pm_user', JSON.stringify(userInfo));
+      localStorage.setItem('pm_user', JSON.stringify(userInfo));
       await refreshPWA();
 
       if (userInfo.role === 'customer') {
@@ -131,7 +131,7 @@ export default function LoginPage() {
 
     try {
       if (!supabase) {
-        sessionStorage.setItem('pm_user', JSON.stringify({
+        localStorage.setItem('pm_user', JSON.stringify({
           id: 'demo',
           email,
           role: 'super_admin',

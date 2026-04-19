@@ -228,7 +228,7 @@ function ReadingsContent() {
   }, []);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     setUser(JSON.parse(saved));
     loadData();
@@ -606,7 +606,7 @@ function ReadingsContent() {
     }
 
     // Create in Supabase
-    const u = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const u = JSON.parse(localStorage.getItem('pm_user') || '{}');
     let newSession;
     try {
       const { data, error } = await supabase.from('reading_sessions').insert({
@@ -1466,7 +1466,7 @@ function ReadingsContent() {
     // Footer
     y += 8;
     if (y > 270) { doc.addPage(); y = 20; }
-    const u = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const u = JSON.parse(localStorage.getItem('pm_user') || '{}');
     doc.setFontSize(8);
     doc.setTextColor(80);
     doc.text(`Carried out by: ${u.full_name || u.email || ''}`, 14, y);
@@ -1628,7 +1628,7 @@ function ReadingsContent() {
     // Footer
     y += 8;
     if (y > 270) { doc.addPage(); y = 20; }
-    const eu = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const eu = JSON.parse(localStorage.getItem('pm_user') || '{}');
     doc.setFontSize(8);
     doc.setTextColor(80);
     doc.text(`Carried out by: ${eu.full_name || eu.email || ''}`, 14, y);

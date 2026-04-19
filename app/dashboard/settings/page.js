@@ -32,7 +32,7 @@ export default function SettingsPage() {
   const [inviting, setInviting] = useState(false);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     const u = JSON.parse(saved);
     if (!['super_admin', 'developer'].includes(u.role)) { router.push('/dashboard'); return; }

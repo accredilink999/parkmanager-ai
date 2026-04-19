@@ -30,7 +30,7 @@ export default function CustomerPortal() {
   const audioCtxRef = useRef(null);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     const u = JSON.parse(saved);
     setUser(u);
@@ -118,7 +118,7 @@ export default function CustomerPortal() {
   }
 
   function logout() {
-    sessionStorage.removeItem('pm_user');
+    localStorage.removeItem('pm_user');
     if (supabase) supabase.auth.signOut();
     router.push('/login');
   }

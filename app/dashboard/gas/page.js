@@ -61,7 +61,7 @@ function GasContent() {
   const collarInputRef = useRef(null);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     setUser(JSON.parse(saved));
 

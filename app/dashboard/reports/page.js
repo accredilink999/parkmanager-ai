@@ -43,7 +43,7 @@ export default function ReportsPage() {
   const [hoDetails, setHoDetails] = useState({});
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     setUser(JSON.parse(saved));
     loadData();
@@ -166,7 +166,7 @@ export default function ReportsPage() {
     }
 
     // Footer
-    const ru = JSON.parse(sessionStorage.getItem('pm_user') || '{}');
+    const ru = JSON.parse(localStorage.getItem('pm_user') || '{}');
     doc.setFontSize(8);
     doc.setTextColor(80);
     doc.setFont(undefined, 'normal');

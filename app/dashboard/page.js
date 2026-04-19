@@ -15,7 +15,7 @@ export default function Dashboard() {
   const [siteLogo, setSiteLogo] = useState('');
 
   useEffect(() => {
-    const saved = sessionStorage.getItem('pm_user');
+    const saved = localStorage.getItem('pm_user');
     if (!saved) { router.push('/login'); return; }
     const u = JSON.parse(saved);
     if (u.role === 'customer') { router.push('/portal'); return; }
@@ -83,7 +83,7 @@ export default function Dashboard() {
   }
 
   function logout() {
-    sessionStorage.removeItem('pm_user');
+    localStorage.removeItem('pm_user');
     if (supabase) supabase.auth.signOut();
     router.push('/login');
   }

@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "pg": "^8.20.0",
     "tailwindcss": "^4"
   }
 }
