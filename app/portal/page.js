@@ -9,11 +9,12 @@ import PortalCertificates from '../components/portal/PortalCertificates';
 import PortalGasOrder from '../components/portal/PortalGasOrder';
 import PortalSiteReport from '../components/portal/PortalSiteReport';
 import PortalEmergency from '../components/portal/PortalEmergency';
+import PortalHome from '../components/portal/PortalHome';
 
 export default function CustomerPortal() {
   const router = useRouter();
   const [user, setUser] = useState(null);
-  const [tab, setTab] = useState('profile');
+  const [tab, setTab] = useState('home');
   const [bills, setBills] = useState([]);
   const [readings, setReadings] = useState([]);
   const [pitch, setPitch] = useState(null);
@@ -280,8 +281,8 @@ export default function CustomerPortal() {
   if (!user) return null;
 
   const tabs = [
-    { key: 'profile', label: 'Profile', color: 'emerald', activeBg: 'bg-emerald-100', activeText: 'text-emerald-700', inactiveText: 'text-emerald-400', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+    { key: 'home', label: 'Home', color: 'emerald', activeBg: 'bg-emerald-100', activeText: 'text-emerald-700', inactiveText: 'text-emerald-400', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
     )},
     { key: 'financials', label: 'Bills', color: 'blue', activeBg: 'bg-blue-100', activeText: 'text-blue-700', inactiveText: 'text-blue-400', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
@@ -365,6 +366,10 @@ export default function CustomerPortal() {
           </div>
         ) : (
           <>
+            {tab === 'home' && (
+              <PortalHome user={user} pitch={pitch} customerProfile={customerProfile}
+                siteName={siteName} sitePhone={sitePhone} onNavigate={setTab} />
+            )}
             {tab === 'profile' && (
               <PortalProfile user={user} pitch={pitch} customerProfile={customerProfile}
                 onUpdate={p => setCustomerProfile(p)} />
