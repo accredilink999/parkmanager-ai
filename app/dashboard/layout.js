@@ -56,9 +56,56 @@ export default function DashboardLayout({ children }) {
       if (u.role !== 'customer') {
         setUser(u);
         userRef.current = u;
+        // Subscribe to push notifications (runs once on mount)
+        subscribeToPush(u);
       }
     }
   }, []);
+
+  // ── Subscribe this device to push notifications ──
+  async function subscribeToPush(u) {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+
+      const reg = await navigator.serviceWorker.ready;
+      const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!vapidKey) return;
+
+      // Convert VAPID key to Uint8Array
+      const urlBase64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+        return outputArray;
+      };
+
+      let subscription = await reg.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        });
+      }
+
+      // Save to server
+      await fetch('/api/push-subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription: subscription.toJSON(),
+          userId: u.id,
+          orgId: u.org_id,
+        }),
+      });
+    } catch (err) {
+      console.error('Push subscribe error:', err);
+    }
+  }
 
   // ── POLL: unified check every 3 seconds ──
   useEffect(() => {
@@ -231,6 +278,23 @@ export default function DashboardLayout({ children }) {
         triggeredBy: u.full_name || u.email,
         at: new Date().toISOString(),
       }));
+
+      // ── SEND PUSH NOTIFICATIONS — works even when app is closed ──
+      try {
+        await fetch('/api/push-notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: '🚨 EMERGENCY ON SITE',
+            body: `Emergency triggered by ${u.full_name || u.email}${pitchNumber ? ` — Pitch ${pitchNumber}` : ''} — OPEN APP NOW`,
+            convId: conv.id,
+            orgId: u.org_id,
+            excludeUserId: u.id,
+          }),
+        });
+      } catch (pushErr) {
+        console.error('Push notify error:', pushErr);
+      }
 
       showToast('Emergency group chat created — all staff notified', 'warning');
     } catch (err) {
