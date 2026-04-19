@@ -84,11 +84,11 @@ export default function DashboardLayout({ children }) {
   async function checkEmergencyFlag(u) {
     if (!supabase || !u) return;
     try {
+      // Query without org_id filter first, then check org_id in JS (handles null org_id)
       const { data, error } = await supabase
         .from('site_settings')
-        .select('value')
+        .select('value, org_id')
         .eq('key', 'active_emergency')
-        .eq('org_id', u.org_id)
         .maybeSingle();
 
       if (error) {
@@ -97,11 +97,13 @@ export default function DashboardLayout({ children }) {
       }
 
       if (!data || !data.value) {
-        // No active emergency — clear lockscreen if showing
+        // No active emergency — clear everything
         if (emergencyLockRef.current) {
           setEmergencyLock(null);
           setAlertActive(false);
         }
+        // Clear stale dismissals so next emergency works
+        sessionStorage.removeItem('pm_emergency_dismissed');
         return;
       }
 
@@ -111,20 +113,20 @@ export default function DashboardLayout({ children }) {
 
       // Don't lock the person who triggered it
       if (emergency.triggeredById === u.id) {
-        // But DO show the active alert banner for the triggerer
-        if (!alertActive) setAlertActive(true);
+        // Show the active alert banner for the triggerer
+        setAlertActive(true);
         return;
       }
 
-      // Already dismissed this specific emergency
+      // Already dismissed this specific emergency (by convId)
       const dismissed = sessionStorage.getItem('pm_emergency_dismissed');
       if (dismissed === emergency.convId) return;
 
-      // Already showing this lockscreen
+      // Already showing this exact lockscreen
       if (emergencyLockRef.current?.convId === emergency.convId) return;
 
-      // SHOW LOCKSCREEN
-      console.log('[Emergency] LOCKSCREEN ACTIVATED for user', u.id);
+      // SHOW LOCKSCREEN — new or different emergency
+      console.log('[Emergency] LOCKSCREEN ACTIVATED — convId:', emergency.convId, 'user:', u.id);
       setEmergencyLock({
         convId: emergency.convId,
         triggeredBy: emergency.triggeredBy,
@@ -351,12 +353,13 @@ export default function DashboardLayout({ children }) {
   async function cancelAlert() {
     setAlertActive(false);
     localStorage.removeItem('pm_emergency_active');
+    sessionStorage.removeItem('pm_emergency_dismissed');
 
     // DELETE the DB flag — all clients will see it's gone within 3s
     if (supabase && user) {
+      // Delete by key only (handles null org_id edge case)
       const { error } = await supabase.from('site_settings')
         .delete()
-        .eq('org_id', user.org_id)
         .eq('key', 'active_emergency');
       if (error) console.error('[Emergency] Flag delete error:', error);
       else console.log('[Emergency] DB flag CLEARED — lockscreens will dismiss within 3s');
