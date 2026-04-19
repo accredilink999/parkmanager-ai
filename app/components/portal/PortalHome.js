@@ -68,7 +68,7 @@ export default function PortalHome({ user, pitch, customerProfile, siteName, sit
               </svg>
             </div>
             <div>
-              <p className="text-sm font-bold text-emerald-800">Call Site Office</p>
+              <p className="text-sm font-bold text-emerald-800">Call Site Manager</p>
               <p className="text-xs text-emerald-600">{sitePhone}</p>
             </div>
           </div>
