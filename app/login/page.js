@@ -57,6 +57,20 @@ export default function LoginPage() {
     setLoading(false);
   }
 
+  // Clear old PWA caches and force service worker update
+  async function refreshPWA() {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      }
+    } catch {}
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
     setError('');
@@ -70,6 +84,7 @@ export default function LoginPage() {
           role: 'super_admin',
           full_name: 'Demo Admin',
         }));
+        await refreshPWA();
         router.push('/dashboard');
         return;
       }
@@ -89,9 +104,11 @@ export default function LoginPage() {
         role: profile?.role || 'customer',
         full_name: profile?.full_name || email,
         org_id: profile?.org_id || null,
+        org_name: profile?.org_name || null,
       };
 
       sessionStorage.setItem('pm_user', JSON.stringify(userInfo));
+      await refreshPWA();
 
       if (userInfo.role === 'customer') {
         router.push('/portal');
