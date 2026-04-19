@@ -146,6 +146,56 @@ export default function CustomerPortal() {
     } catch {}
   }
 
+  // Create emergency group chat with all org users
+  async function createEmergencyChat(u) {
+    if (!supabase || !u) return;
+    try {
+      const { data: allProfiles } = await supabase.from('profiles').select('id, full_name, email, role')
+        .eq('org_id', u.org_id);
+      if (!allProfiles || allProfiles.length === 0) return;
+
+      const participants = allProfiles.map(p => p.id);
+      const participant_names = allProfiles.map(p => p.full_name || p.email || 'Unknown');
+      const unread_count = {};
+      participants.forEach(pid => { unread_count[pid] = pid === u.id ? 0 : 1; });
+
+      const pitchNum = pitch?.pitch_number || 'Unknown';
+      const timestamp = new Date().toLocaleString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+
+      const alertMessage = `🚨 EMERGENCY ALERT 🚨\n\nEmergency call made by: ${u.full_name || u.email}\nPitch: ${pitchNum}\nTime: ${timestamp}\n\n⚠️ Please check and update on this emergency here. Respond with status updates and actions taken.`;
+
+      const { data: conv, error: convError } = await supabase.from('pm_conversations').insert({
+        org_id: u.org_id,
+        type: 'group',
+        name: '🚨 EMERGENCY HELP',
+        participants,
+        participant_names,
+        unread_count,
+        created_by: u.id,
+        last_message: '🚨 EMERGENCY ALERT',
+        last_message_at: new Date().toISOString(),
+        last_message_by: u.id,
+      }).select().single();
+
+      if (convError) { console.error('Emergency chat create error:', convError); return; }
+
+      await supabase.from('pm_chat_messages').insert({
+        conversation_id: conv.id,
+        sender_id: u.id,
+        sender_name: u.full_name || u.email,
+        content: alertMessage,
+        read_by: [u.id],
+      });
+
+      showToast('Emergency group chat created — site team notified', 'warning');
+    } catch (err) {
+      console.error('Emergency chat error:', err);
+    }
+  }
+
   // Emergency countdown
   function startEmergencyCountdown() {
     if (emergencyCountdown !== null) return;
@@ -165,6 +215,7 @@ export default function CustomerPortal() {
         setEmergencyCountdown(null);
         setAlertActive(true);
         playBeep(1200, 500);
+        createEmergencyChat(user);
       }
     }, 1000);
   }

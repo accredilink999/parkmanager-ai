@@ -142,7 +142,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="bg-slate-50">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
