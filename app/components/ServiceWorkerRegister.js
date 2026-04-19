@@ -6,25 +6,23 @@ export default function ServiceWorkerRegister() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
         .then((reg) => {
-          // Check for updates immediately on every page load
+          // Check for updates on every page load
           reg.update();
 
-          // When a new SW is found, activate it straight away
+          // Only auto-reload on SW update (not first install)
           reg.addEventListener('updatefound', () => {
             const newSW = reg.installing;
-            if (newSW) {
+            if (newSW && navigator.serviceWorker.controller) {
+              // There's already a SW controlling — this is an update
               newSW.addEventListener('statechange', () => {
                 if (newSW.state === 'activated') {
-                  // New SW active — reload to get fresh content
                   window.location.reload();
                 }
               });
             }
           });
         })
-        .catch((err) => {
-          console.log('SW registration failed:', err);
-        });
+        .catch(() => {});
     }
   }, []);
 
