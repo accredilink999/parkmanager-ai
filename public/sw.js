@@ -1,11 +1,13 @@
-const CACHE_NAME = 'parkmanager-v1';
+const CACHE_NAME = 'parkmanager-v2';
 const STATIC_ASSETS = [
+  '/',
   '/login',
   '/dashboard',
   '/portal',
   '/manifest.json',
   '/icon-192.svg',
   '/icon-512.svg',
+  '/hero-bg.jpg',
 ];
 
 // Install — cache core pages
@@ -16,7 +18,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate — clean old caches
+// Activate — clean ALL old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
