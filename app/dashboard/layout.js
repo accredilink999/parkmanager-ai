@@ -24,6 +24,31 @@ export default function DashboardLayout({ children }) {
   // Keep ref in sync with state (avoids stale closure in intervals)
   useEffect(() => { emergencyLockRef.current = emergencyLock; }, [emergencyLock]);
 
+  // ── Continuous alarm beep while lockscreen is active ──
+  const alarmRef = useRef(null);
+  useEffect(() => {
+    if (emergencyLock) {
+      // Beep every 1.5 seconds until dismissed
+      const beepLoop = () => {
+        playBeep(1000, 400);
+        setTimeout(() => playBeep(800, 400), 500);
+      };
+      beepLoop(); // immediate first beep
+      alarmRef.current = setInterval(beepLoop, 1500);
+    } else {
+      if (alarmRef.current) {
+        clearInterval(alarmRef.current);
+        alarmRef.current = null;
+      }
+    }
+    return () => {
+      if (alarmRef.current) {
+        clearInterval(alarmRef.current);
+        alarmRef.current = null;
+      }
+    };
+  }, [emergencyLock]);
+
   useEffect(() => {
     const saved = localStorage.getItem('pm_user');
     if (saved) {
