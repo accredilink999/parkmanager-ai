@@ -1,4 +1,4 @@
-const CACHE_NAME = 'parkmanager-v16';
+const CACHE_NAME = 'parkmanager-v17';
 const STATIC_ASSETS = [
   '/',
   '/login',

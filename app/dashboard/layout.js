@@ -65,13 +65,19 @@ export default function DashboardLayout({ children }) {
   // ── Subscribe this device to push notifications ──
   async function subscribeToPush(u) {
     try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        console.log('[PUSH] Browser does not support push notifications');
+        return;
+      }
 
+      console.log('[PUSH] Requesting notification permission...');
       const permission = await Notification.requestPermission();
+      console.log('[PUSH] Permission result:', permission);
       if (permission !== 'granted') return;
 
       const reg = await navigator.serviceWorker.ready;
       const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      console.log('[PUSH] VAPID key available:', !!vapidKey, vapidKey ? vapidKey.substring(0, 10) + '...' : 'MISSING');
       if (!vapidKey) return;
 
       // Convert VAPID key to Uint8Array
@@ -93,7 +99,8 @@ export default function DashboardLayout({ children }) {
       }
 
       // Save to server
-      await fetch('/api/push-subscribe', {
+      console.log('[PUSH] Saving subscription to server for user:', u.id);
+      const resp = await fetch('/api/push-subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -102,8 +109,10 @@ export default function DashboardLayout({ children }) {
           orgId: u.org_id,
         }),
       });
+      const result = await resp.json();
+      console.log('[PUSH] Subscribe result:', result);
     } catch (err) {
-      console.error('Push subscribe error:', err);
+      console.error('[PUSH] Subscribe error:', err);
     }
   }
 
