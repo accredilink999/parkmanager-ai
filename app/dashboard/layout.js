@@ -31,23 +31,18 @@ export default function DashboardLayout({ children }) {
       if (u.role !== 'customer') {
         setUser(u);
         userRef.current = u;
-        loadUnread(u);
       }
     }
   }, []);
 
-  // ── POLL: Check for active emergency every 3 seconds ──
-  // This is the PRIMARY mechanism — simple DB flag in site_settings
+  // ── POLL: unified check every 3 seconds ──
   useEffect(() => {
     if (!user || !supabase) return;
 
-    // Check immediately on mount
-    checkEmergencyFlag(user);
+    // Run immediately
+    pollEverything(user);
 
-    const interval = setInterval(() => {
-      loadUnread(user);
-      checkEmergencyFlag(user);
-    }, 3000);
+    const interval = setInterval(() => pollEverything(user), 3000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -56,7 +51,7 @@ export default function DashboardLayout({ children }) {
     if (!supabase || !user) return;
     const ch = supabase.channel('dash-nav-unread')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pm_conversations' }, () => {
-        loadUnread(user);
+        pollEverything(user);
       })
       .subscribe();
     return () => supabase.removeChannel(ch);
@@ -70,75 +65,68 @@ export default function DashboardLayout({ children }) {
     };
   }, []);
 
-  async function loadUnread(u) {
+  // ── Single poll function: unread badge + emergency lockscreen ──
+  async function pollEverything(u) {
     if (!supabase || !u) return;
     try {
-      const { data } = await supabase.from('pm_conversations').select('unread_count, participants');
-      const mine = (data || []).filter(c => c.participants?.includes(u.id));
+      // ONE query gets all conversations — used for both unread badge AND emergency detection
+      const { data } = await supabase.from('pm_conversations')
+        .select('id, name, unread_count, participants, created_by, last_message_at');
+
+      if (!data) return;
+
+      const mine = data.filter(c => c.participants?.includes(u.id));
+
+      // 1. Unread badge count
       const total = mine.reduce((sum, c) => sum + (c.unread_count?.[u.id] || 0), 0);
       setUnreadChat(total);
+
+      // 2. Emergency lockscreen — check for EMERGENCY HELP conversations with unread
+      checkEmergencyFromConversations(mine, u);
     } catch {}
   }
 
-  // ── BULLETPROOF: Check site_settings for active_emergency flag ──
-  async function checkEmergencyFlag(u) {
-    if (!supabase || !u) return;
-    try {
-      // Use .select().limit(1) — NOT .maybeSingle() which errors on multiple rows
-      const { data: rows, error } = await supabase
-        .from('site_settings')
-        .select('value')
-        .eq('key', 'active_emergency')
-        .order('updated_at', { ascending: false })
-        .limit(1);
+  // ── Emergency detection from conversations (same data as unread badge) ──
+  function checkEmergencyFromConversations(conversations, u) {
+    // Find the most recent emergency conversation with unread messages for this user
+    const emergencyConvs = conversations
+      .filter(c => c.name && c.name.includes('EMERGENCY HELP'))
+      .filter(c => (c.unread_count?.[u.id] || 0) > 0)
+      .sort((a, b) => (b.last_message_at || '').localeCompare(a.last_message_at || ''));
 
-      if (error) {
-        console.error('[Emergency] Flag check error:', error);
-        return;
+    const emergency = emergencyConvs[0];
+
+    if (!emergency) {
+      // No active emergency with unread messages — clear lockscreen if showing
+      if (emergencyLockRef.current) {
+        setEmergencyLock(null);
       }
-
-      const row = rows?.[0];
-
-      if (!row || !row.value) {
-        // No active emergency — clear everything
-        if (emergencyLockRef.current) {
-          setEmergencyLock(null);
-          setAlertActive(false);
-        }
-        // Clear stale dismissals so next emergency works
-        sessionStorage.removeItem('pm_emergency_dismissed');
-        return;
-      }
-
-      // Parse the emergency data
-      let emergency;
-      try { emergency = JSON.parse(row.value); } catch { return; }
-
-      // Don't lock the person who triggered it
-      if (emergency.triggeredById === u.id) {
-        // Show the active alert banner for the triggerer
-        setAlertActive(true);
-        return;
-      }
-
-      // Already dismissed this specific emergency (by convId)
-      const dismissed = sessionStorage.getItem('pm_emergency_dismissed');
-      if (dismissed === emergency.convId) return;
-
-      // Already showing this exact lockscreen
-      if (emergencyLockRef.current?.convId === emergency.convId) return;
-
-      // SHOW LOCKSCREEN
-      setEmergencyLock({
-        convId: emergency.convId,
-        triggeredBy: emergency.triggeredBy,
-        content: emergency.content || '',
-        at: emergency.at,
-      });
-      playBeep(1000, 300);
-    } catch (err) {
-      console.error('[Emergency] checkEmergencyFlag error:', err);
+      // Clear stale dismissals
+      sessionStorage.removeItem('pm_emergency_dismissed');
+      return;
     }
+
+    // Don't lock the person who triggered it
+    if (emergency.created_by === u.id) {
+      if (!alertActive) setAlertActive(true);
+      return;
+    }
+
+    // Already dismissed this specific conversation
+    const dismissed = sessionStorage.getItem('pm_emergency_dismissed');
+    if (dismissed === emergency.id) return;
+
+    // Already showing this exact lockscreen
+    if (emergencyLockRef.current?.convId === emergency.id) return;
+
+    // SHOW LOCKSCREEN
+    setEmergencyLock({
+      convId: emergency.id,
+      triggeredBy: emergency.name.replace('🚨 EMERGENCY HELP', '').trim() || 'Staff Member',
+      content: '',
+      at: emergency.last_message_at,
+    });
+    playBeep(1000, 300);
   }
 
   function playBeep(freq = 800, duration = 200) {
@@ -162,7 +150,7 @@ export default function DashboardLayout({ children }) {
     toastTimerRef.current = setTimeout(() => setToast(null), 3000);
   }
 
-  // Create emergency group chat + SET the DB flag that all clients poll
+  // Create emergency group chat
   async function createEmergencyChat(u) {
     if (!supabase || !u) return;
     try {
@@ -190,7 +178,6 @@ export default function DashboardLayout({ children }) {
 
       const alertMessage = `🚨 EMERGENCY ALERT 🚨\n\nEmergency call made by: ${u.full_name || u.email}\nRole: ${u.role?.replace('_', ' ') || 'Staff'}${pitchNumber ? `\n📍 PITCH: ${pitchNumber}` : ''}\nTime: ${timestamp}\n\n⚠️ IMMEDIATE ASSISTANCE REQUIRED\nPlease check and update on this emergency here.\nRespond with status updates and actions taken.`;
 
-      // 1. Create the emergency group chat
       const { data: conv, error: convError } = await supabase.from('pm_conversations').insert({
         org_id: u.org_id,
         type: 'group',
@@ -206,7 +193,6 @@ export default function DashboardLayout({ children }) {
 
       if (convError) { console.error('Emergency chat create error:', convError); return; }
 
-      // 2. Insert the alert message
       await supabase.from('pm_chat_messages').insert({
         conversation_id: conv.id,
         sender_id: u.id,
@@ -214,31 +200,6 @@ export default function DashboardLayout({ children }) {
         content: alertMessage,
         read_by: [u.id],
       });
-
-      // 3. SET THE DB FLAG — delete any old ones first, then insert fresh
-      const emergencyData = JSON.stringify({
-        convId: conv.id,
-        triggeredBy: u.full_name || u.email,
-        triggeredById: u.id,
-        pitchNumber,
-        content: alertMessage,
-        at: new Date().toISOString(),
-      });
-
-      // Delete ALL old active_emergency rows (clean slate)
-      await supabase.from('site_settings').delete().eq('key', 'active_emergency');
-
-      // Insert the new flag
-      const { error: flagError } = await supabase.from('site_settings').insert({
-        org_id: u.org_id,
-        key: 'active_emergency',
-        value: emergencyData,
-        updated_at: new Date().toISOString(),
-      });
-
-      if (flagError) {
-        console.error('[Emergency] Flag insert error:', flagError);
-      }
 
       localStorage.setItem('pm_emergency_active', JSON.stringify({
         convId: conv.id, userId: u.id,
@@ -289,7 +250,6 @@ export default function DashboardLayout({ children }) {
         read_by: [user.id],
       });
 
-      // Update last message on conversation
       await supabase.from('pm_conversations').update({
         last_message: responseMsg,
         last_message_at: new Date().toISOString(),
@@ -339,21 +299,10 @@ export default function DashboardLayout({ children }) {
     showToast('Emergency alert cancelled', 'success');
   }
 
-  async function cancelAlert() {
+  function cancelAlert() {
     setAlertActive(false);
     localStorage.removeItem('pm_emergency_active');
     sessionStorage.removeItem('pm_emergency_dismissed');
-
-    // DELETE the DB flag — all clients will see it's gone within 3s
-    if (supabase && user) {
-      // Delete by key only (handles null org_id edge case)
-      const { error } = await supabase.from('site_settings')
-        .delete()
-        .eq('key', 'active_emergency');
-      if (error) console.error('[Emergency] Flag delete error:', error);
-      else console.log('[Emergency] DB flag CLEARED — lockscreens will dismiss within 3s');
-    }
-
     showToast('Emergency alert stood down', 'success');
   }
 
@@ -430,11 +379,8 @@ export default function DashboardLayout({ children }) {
 
             <h1 className="text-3xl font-black text-white mb-2 tracking-wide">EMERGENCY ON SITE</h1>
             <p className="text-lg text-white/90 font-semibold mb-1">Immediate assistance required</p>
-            <p className="text-sm text-white/70 mb-8">
-              Triggered by {emergencyLock.triggeredBy}
-            </p>
 
-            <div className="space-y-3">
+            <div className="space-y-3 mt-8">
               <button
                 onClick={() => handleEmergencyResponse('onroute')}
                 className="w-full py-5 bg-white text-red-700 rounded-2xl text-lg font-black hover:bg-red-50 active:bg-red-100 transition-colors shadow-2xl flex items-center justify-center gap-3"
