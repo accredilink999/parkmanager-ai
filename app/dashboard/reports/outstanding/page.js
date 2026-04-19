@@ -224,7 +224,7 @@ export default function OutstandingBillsPage() {
     doc.text('PAYMENT OUTSTANDING', 105, y + 3, { align: 'center' });
     doc.setFontSize(8);
     doc.setFont(undefined, 'normal');
-    doc.text('Please contact the site office to arrange payment.', 105, y + 10, { align: 'center' });
+    doc.text('Please contact the site manager to arrange payment.', 105, y + 10, { align: 'center' });
 
     // Footer
     doc.setFontSize(8);
@@ -431,7 +431,7 @@ export default function OutstandingBillsPage() {
       doc.text('PAYMENT OUTSTANDING', 105, py + 7, { align: 'center' });
       doc.setFontSize(7);
       doc.setFont(undefined, 'normal');
-      doc.text('Please contact the site office to arrange payment.', 105, py + 13, { align: 'center' });
+      doc.text('Please contact the site manager to arrange payment.', 105, py + 13, { align: 'center' });
 
       doc.setFontSize(7);
       doc.setTextColor(150);

@@ -2,7 +2,7 @@
 
 export default function PortalEmergency({ siteName, sitePhone, onEmergencyPress }) {
   const numbers = [
-    { label: 'Site Office', number: sitePhone || 'Not set', desc: `Contact ${siteName || 'the site office'}`, color: 'bg-emerald-600', available: !!sitePhone },
+    { label: 'Site Manager', number: sitePhone || 'Not set', desc: `Contact ${siteName || 'the site manager'}`, color: 'bg-emerald-600', available: !!sitePhone },
     { label: 'Emergency Services', number: '999', desc: 'Police, Fire, Ambulance', color: 'bg-red-600', available: true },
     { label: 'Gas Emergency', number: '0800 111 999', desc: 'National Gas Emergency Service', color: 'bg-amber-600', available: true },
     { label: 'NHS Non-Emergency', number: '111', desc: 'Medical advice when not life-threatening', color: 'bg-blue-600', available: true },
@@ -67,7 +67,7 @@ export default function PortalEmergency({ siteName, sitePhone, onEmergencyPress 
           <li>2. Call 999</li>
           <li>3. Go to the fire assembly point</li>
           <li>4. Do NOT go back inside</li>
-          <li>5. Alert the site office when safe to do so</li>
+          <li>5. Alert the site manager when safe to do so</li>
         </ul>
       </div>
     </div>

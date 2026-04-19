@@ -60,7 +60,7 @@ export default function InstallPrompt() {
     <div className="fixed bottom-0 left-0 right-0 z-50 p-4 animate-slide-up">
       <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-2xl border border-slate-200 p-5">
         <div className="flex items-start gap-4">
-          <img src="/icon-192.svg" alt="ParkManagerAI" className="w-12 h-12 rounded-xl shrink-0" />
+          <img src="/icon-192.png" alt="ParkManagerAI" className="w-12 h-12 rounded-xl shrink-0" />
           <div className="flex-1 min-w-0">
             <h3 className="text-base font-bold text-slate-900">Install ParkManagerAI</h3>
             <p className="text-sm text-slate-500 mt-0.5">

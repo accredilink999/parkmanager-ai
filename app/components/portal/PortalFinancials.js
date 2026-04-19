@@ -100,7 +100,7 @@ export default function PortalFinancials({ bills, readings, pitch, user, siteNam
                 )}
                 {b.status !== 'paid' && (
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                    <p className="text-xs text-amber-800 font-medium">Payment required &mdash; please contact the site office.</p>
+                    <p className="text-xs text-amber-800 font-medium">Payment required &mdash; please contact the site manager.</p>
                     {sitePhone && <p className="text-xs text-amber-700 mt-1">Tel: {sitePhone}</p>}
                   </div>
                 )}

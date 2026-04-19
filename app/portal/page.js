@@ -265,7 +265,7 @@ export default function CustomerPortal() {
       doc.setTextColor(220, 38, 38); doc.setFontSize(14); doc.setFont(undefined, 'bold');
       doc.text('PAYMENT OUTSTANDING', 105, y + 3, { align: 'center' });
       doc.setFontSize(8); doc.setFont(undefined, 'normal');
-      doc.text('Please contact the site office to arrange payment.', 105, y + 10, { align: 'center' });
+      doc.text('Please contact the site manager to arrange payment.', 105, y + 10, { align: 'center' });
     }
 
     doc.setFontSize(7); doc.setTextColor(150);
@@ -361,7 +361,7 @@ export default function CustomerPortal() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
             </svg>
             <p className="text-sm text-slate-500">No pitch assigned to your account yet.</p>
-            <p className="text-xs text-slate-400 mt-1">Contact the site office to get set up.</p>
+            <p className="text-xs text-slate-400 mt-1">Contact the site manager to get set up.</p>
             {sitePhone && <p className="text-xs text-emerald-600 mt-2 font-medium">Tel: {sitePhone}</p>}
           </div>
         ) : (

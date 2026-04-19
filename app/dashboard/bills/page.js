@@ -740,7 +740,7 @@ export default function BillsPage() {
       doc.text('PAYMENT OUTSTANDING', 105, y + 3, { align: 'center' });
       doc.setFontSize(8);
       doc.setFont(undefined, 'normal');
-      doc.text('Please contact the site office to arrange payment.', 105, y + 10, { align: 'center' });
+      doc.text('Please contact the site manager to arrange payment.', 105, y + 10, { align: 'center' });
     }
 
     // Footer

@@ -57,7 +57,7 @@ export default function PortalHome({ user, pitch, customerProfile, siteName, sit
         </div>
       )}
 
-      {/* Site office contact */}
+      {/* Site manager contact */}
       {sitePhone && (
         <a href={`tel:${sitePhone.replace(/\s/g, '')}`}
           className="block bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
