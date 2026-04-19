@@ -84,19 +84,22 @@ export default function DashboardLayout({ children }) {
   async function checkEmergencyFlag(u) {
     if (!supabase || !u) return;
     try {
-      // Query without org_id filter first, then check org_id in JS (handles null org_id)
-      const { data, error } = await supabase
+      // Use .select().limit(1) — NOT .maybeSingle() which errors on multiple rows
+      const { data: rows, error } = await supabase
         .from('site_settings')
-        .select('value, org_id')
+        .select('value')
         .eq('key', 'active_emergency')
-        .maybeSingle();
+        .order('updated_at', { ascending: false })
+        .limit(1);
 
       if (error) {
         console.error('[Emergency] Flag check error:', error);
         return;
       }
 
-      if (!data || !data.value) {
+      const row = rows?.[0];
+
+      if (!row || !row.value) {
         // No active emergency — clear everything
         if (emergencyLockRef.current) {
           setEmergencyLock(null);
@@ -109,7 +112,7 @@ export default function DashboardLayout({ children }) {
 
       // Parse the emergency data
       let emergency;
-      try { emergency = JSON.parse(data.value); } catch { return; }
+      try { emergency = JSON.parse(row.value); } catch { return; }
 
       // Don't lock the person who triggered it
       if (emergency.triggeredById === u.id) {
@@ -125,8 +128,7 @@ export default function DashboardLayout({ children }) {
       // Already showing this exact lockscreen
       if (emergencyLockRef.current?.convId === emergency.convId) return;
 
-      // SHOW LOCKSCREEN — new or different emergency
-      console.log('[Emergency] LOCKSCREEN ACTIVATED — convId:', emergency.convId, 'user:', u.id);
+      // SHOW LOCKSCREEN
       setEmergencyLock({
         convId: emergency.convId,
         triggeredBy: emergency.triggeredBy,
@@ -213,7 +215,7 @@ export default function DashboardLayout({ children }) {
         read_by: [u.id],
       });
 
-      // 3. SET THE DB FLAG — this is what all other clients poll
+      // 3. SET THE DB FLAG — delete any old ones first, then insert fresh
       const emergencyData = JSON.stringify({
         convId: conv.id,
         triggeredBy: u.full_name || u.email,
@@ -223,33 +225,20 @@ export default function DashboardLayout({ children }) {
         at: new Date().toISOString(),
       });
 
-      // Try upsert — if active_emergency row exists, update it; otherwise insert
-      const { error: flagError } = await supabase.from('site_settings').upsert({
+      // Delete ALL old active_emergency rows (clean slate)
+      await supabase.from('site_settings').delete().eq('key', 'active_emergency');
+
+      // Insert the new flag
+      const { error: flagError } = await supabase.from('site_settings').insert({
         org_id: u.org_id,
         key: 'active_emergency',
         value: emergencyData,
         updated_at: new Date().toISOString(),
-      }, { onConflict: 'key,org_id' });
+      });
 
       if (flagError) {
-        console.error('[Emergency] Flag upsert error:', flagError);
-        // Fallback: try insert then update
-        const { error: insErr } = await supabase.from('site_settings').insert({
-          org_id: u.org_id,
-          key: 'active_emergency',
-          value: emergencyData,
-          updated_at: new Date().toISOString(),
-        });
-        if (insErr) {
-          // Row might already exist, try update
-          await supabase.from('site_settings')
-            .update({ value: emergencyData })
-            .eq('org_id', u.org_id)
-            .eq('key', 'active_emergency');
-        }
+        console.error('[Emergency] Flag insert error:', flagError);
       }
-
-      console.log('[Emergency] DB flag SET — all clients will see lockscreen within 3s');
 
       localStorage.setItem('pm_emergency_active', JSON.stringify({
         convId: conv.id, userId: u.id,
